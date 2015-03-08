@@ -8,19 +8,20 @@ import breeze.util.HashIndex
 object DBSCAN {
 
 	// @return seq of clusters and seq of points without cluster
-	def DBSCAN[Point](dataset: IndexedSeq[Point], eps: Double, minPts: Int, dist: (Point, Point) => Double): (IndexedSeq[Map[Int, Point]], Map[Int, Point]) = {
+	def apply[Point <: AnyRef](dataset: IndexedSeq[Point], eps: Double, minPts: Int, dist: (Point, Point) => Double): (IndexedSeq[Map[Int, Point]], Map[Int, Point]) = {
 
+		val datasetArr = dataset.toArray[AnyRef].asInstanceOf[Array[Point]]
 
 		val NotVisited = -1
 		val Noise = -2
 
 		// NotVisited, Noise, clutserId
-		val pointClusters = Array.fill(dataset.size)(NotVisited)
+		val pointClusters = Array.fill(datasetArr.size)(NotVisited)
 	
 		def run() = {
 			var currentClusterId = 0
 			for {
-				(p, pIdx) <- dataset.zipWithIndex
+				(p, pIdx) <- datasetArr.zipWithIndex
 				if (pointClusters(pIdx) == NotVisited)
 			} {
 				val neighborPts = regionQuery(p)
@@ -35,29 +36,40 @@ object DBSCAN {
 		}
 
 		def expandCluster(pIdx: Int, _neighborPts: IndexedSeq[(Int, Point)], clusterId: Int) = {
-			val neighborPts = scala.collection.mutable.Queue[(Int, Point)](_neighborPts: _*)
+			val neighborPts = scala.collection.mutable.Set[(Int, Point)](_neighborPts: _*)
 			pointClusters(pIdx) = clusterId
 
 			while (!neighborPts.isEmpty) {
-				val (ppIdx, pp) = neighborPts.dequeue()
+				val h @ (ppIdx, pp) = neighborPts.head
+				neighborPts.remove(h)
 				if (pointClusters(ppIdx) == NotVisited) {
 					val newNeighborPts = regionQuery(pp)
 					if (newNeighborPts.size >= minPts) {
-						neighborPts.enqueue(newNeighborPts: _*)
+						//neighborPts ++= newNeighborPts
+						newNeighborPts foreach { case h @ (idx, p) =>
+							if (pointClusters(idx) == NotVisited) {
+								neighborPts += h
+							}
+						}
 					}
 				}
-				if (pointClusters(ppIdx) < 0) //P' is not yet member of any cluster
+				if (pointClusters(ppIdx) < 0) { // P' is not yet member of any cluster
 					pointClusters(ppIdx) = clusterId
+				}
 			}
 		}
 
 		// return all points within P's eps-neighborhood (including P)
 		def regionQuery(p: Point): IndexedSeq[(Int, Point)] =
 			(for {
-				(pp, ppIdx) <- dataset.zipWithIndex//.par
-				d = dist(p, pp)
-				if d <= eps
-			} yield (ppIdx, pp)).toVector
+				ppIdx <- 0 until datasetArr.size
+				if dist(p, datasetArr(ppIdx)) <= eps
+			} yield (ppIdx, datasetArr(ppIdx))).toVector
+//			(for {
+//				(pp, ppIdx) <- datasetArr.zipWithIndex//.par
+//				d = dist(p, pp)
+//				if d <= eps
+//			} yield (ppIdx, pp)).toVector
 
 		run()
 
@@ -66,13 +78,13 @@ object DBSCAN {
 		val inClusters = groupByKey(pointClusters.zipWithIndex filter { 
 			case (cluster, idx) => cluster >= 0
 		} map {
-			case (cluster, idx) => (cluster, (idx, dataset(idx)))
+			case (cluster, idx) => (cluster, (idx, datasetArr(idx)))
 		}).values.toIndexedSeq.map(_.toMap)
 
 		val noise = pointClusters.zipWithIndex filter { 
 			case (cluster, idx) => cluster == Noise
 		} map {
-			case (cluster, idx) => (idx, dataset(idx))
+			case (cluster, idx) => (idx, datasetArr(idx))
 		} toMap
 
 		(inClusters, noise)
