@@ -6,72 +6,36 @@ import breeze.util.HashIndex
 
 
 object DBSCAN {
+	def apply[Point](dataset: IndexedSeq[Point], eps: Double, minPts: Int, dist: (Point, Point) => Double): (IndexedSeq[Map[Int, Point]], Map[Int, Point]) =
+		new DBSCAN(dataset, eps, minPts, dist).run
+}
+
+
+class DBSCAN[Point](dataset: IndexedSeq[Point], val eps: Double, val minPts: Int, val dist: (Point, Point) => Double) {
+
+	val datasetArr = dataset.asInstanceOf[IndexedSeq[AnyRef]].toArray.asInstanceOf[Array[Point]]
+
+	val NotVisited = -1
+	val Noise = -2
+
+	// NotVisited, Noise, clutserId
+	val pointClusters = Array.fill(datasetArr.size)(NotVisited)
 
 	// @return seq of clusters and seq of points without cluster
-	def apply[Point <: AnyRef](dataset: IndexedSeq[Point], eps: Double, minPts: Int, dist: (Point, Point) => Double): (IndexedSeq[Map[Int, Point]], Map[Int, Point]) = {
-
-		val datasetArr = dataset.toArray[AnyRef].asInstanceOf[Array[Point]]
-
-		val NotVisited = -1
-		val Noise = -2
-
-		// NotVisited, Noise, clutserId
-		val pointClusters = Array.fill(datasetArr.size)(NotVisited)
-	
-		def run() = {
-			var currentClusterId = 0
-			for {
-				(p, pIdx) <- datasetArr.zipWithIndex
-				if (pointClusters(pIdx) == NotVisited)
-			} {
-				val neighborPts = regionQuery(p)
-				if (neighborPts.size < minPts) {
-					//println("Noise "+p)
-					pointClusters(pIdx) = Noise
-					currentClusterId += 1
-				} else {
-					expandCluster(pIdx, neighborPts, currentClusterId)
-				}
+	def run: (IndexedSeq[Map[Int, Point]], Map[Int, Point]) = {
+		var currentClusterId = 0
+		for {
+			pIdx <- 0 until datasetArr.size
+			if (pointClusters(pIdx) == NotVisited)
+		} {
+			val neighborPts = regionQuery(pIdx)
+			if (neighborPts.size < minPts) {
+				pointClusters(pIdx) = Noise
+				currentClusterId += 1
+			} else {
+				expandCluster(pIdx, neighborPts, currentClusterId)
 			}
 		}
-
-		def expandCluster(pIdx: Int, _neighborPts: IndexedSeq[(Int, Point)], clusterId: Int) = {
-			val neighborPts = scala.collection.mutable.Set[(Int, Point)](_neighborPts: _*)
-			pointClusters(pIdx) = clusterId
-
-			while (!neighborPts.isEmpty) {
-				val h @ (ppIdx, pp) = neighborPts.head
-				neighborPts.remove(h)
-				if (pointClusters(ppIdx) == NotVisited) {
-					val newNeighborPts = regionQuery(pp)
-					if (newNeighborPts.size >= minPts) {
-						//neighborPts ++= newNeighborPts
-						newNeighborPts foreach { case h @ (idx, p) =>
-							if (pointClusters(idx) == NotVisited) {
-								neighborPts += h
-							}
-						}
-					}
-				}
-				if (pointClusters(ppIdx) < 0) { // P' is not yet member of any cluster
-					pointClusters(ppIdx) = clusterId
-				}
-			}
-		}
-
-		// return all points within P's eps-neighborhood (including P)
-		def regionQuery(p: Point): IndexedSeq[(Int, Point)] =
-			(for {
-				ppIdx <- 0 until datasetArr.size
-				if dist(p, datasetArr(ppIdx)) <= eps
-			} yield (ppIdx, datasetArr(ppIdx))).toVector
-//			(for {
-//				(pp, ppIdx) <- datasetArr.zipWithIndex//.par
-//				d = dist(p, pp)
-//				if d <= eps
-//			} yield (ppIdx, pp)).toVector
-
-		run()
 
 		assert(pointClusters forall (_ != NotVisited))
 
@@ -90,6 +54,49 @@ object DBSCAN {
 		(inClusters, noise)
 	}
 
+
+	def expandCluster(pIdx: Int, _neighborPts: IndexedSeq[Int], clusterId: Int) = {
+		val neighborPts = scala.collection.mutable.Set[Int](_neighborPts: _*)
+		pointClusters(pIdx) = clusterId
+
+		while (!neighborPts.isEmpty) {
+			val ppIdx = neighborPts.head
+			neighborPts.remove(ppIdx)
+			if (pointClusters(ppIdx) == NotVisited) {
+				val newNeighborPts = regionQuery(ppIdx)
+				if (newNeighborPts.size >= minPts) {
+					//neighborPts ++= newNeighborPts
+					newNeighborPts foreach { idx =>
+						if (pointClusters(idx) == NotVisited) {
+							neighborPts += idx
+						}
+					}
+				}
+			}
+			if (pointClusters(ppIdx) < 0) { // P' is not yet member of any cluster
+				pointClusters(ppIdx) = clusterId
+			}
+		}
+	}
+
+	// return all points within P's eps-neighborhood (including P)
+	// if this method is overwriten, it must not return
+	def regionQuery(pIdx: Int): IndexedSeq[Int] = {
+		var ppIdx = 0
+		val res = new collection.immutable.VectorBuilder[Int]
+		val p = datasetArr(pIdx)
+
+		while (ppIdx < datasetArr.length) {
+			if (dist(p, datasetArr(ppIdx)) <= eps) {
+				res += ppIdx
+			}
+			ppIdx += 1
+		}
+		
+		res.result
+	}
+
 	def groupByKey[K, V](xs: Iterable[(K, V)]): Map[K, Seq[V]] =
 		xs groupBy (_._1) map { case (k, xs) => (k, xs map (_._2) toSeq) }
+
 }
