@@ -14,18 +14,31 @@ trait HashFuncLong[T] {
 }
 
 
+
 trait Sketch extends Serializable {
 	def estimateSimilarity(idxA: Int, idxB: Int): Double
+	//def estimateSimilarity(sameBits: Int): Double
 	def sameBits(idxA: Int, idxB: Int): Int
 	def minSameBits(sim: Double): Int
 	
 	def empty: Sketch
+	def get(idx: Int): Sketch = ???
 }
+
+
 
 abstract class BitSketch extends Sketch {
 
 	def sketchArray: Array[Long]
 	def bitsPerSketch: Int
+
+	def minSameBits(sim: Double): Int = {
+		require(sim >= 0.0 && sim <= 1.0, "similarity must be from (0, 1)")
+		(sim * bitsPerSketch).toInt
+	}
+
+	def estimateSimilarity(sameBits: Int): Double =
+		sameBits.toDouble / bitsPerSketch
 
 	def sameBits(arrA: Array[Long], arrB: Array[Long], idxA: Int, idxB: Int, bitsPerSketch: Int): Int = {
 		val longsLen = bitsPerSketch / 64
@@ -41,9 +54,7 @@ abstract class BitSketch extends Sketch {
 	}
 
 	def sameBits64(arrA: Array[Long], arrB: Array[Long], idxA: Int, idxB: Int): Int = {
-		var same = 64
-		same -= bitCount(arrA(idxA) ^ arrB(idxB))
-		same
+		64 - bitCount(arrA(idxA) ^ arrB(idxB))
 	}
 
 	def sameBits128(arrA: Array[Long], arrB: Array[Long], idxA: Int, idxB: Int): Int = {
@@ -81,6 +92,8 @@ abstract class BitSketch extends Sketch {
 	def empty: BitSketch
 }
 
+
+
 abstract class IntSketch extends Sketch {
 
 	def sketchArray: Array[Int]
@@ -102,7 +115,15 @@ abstract class IntSketch extends Sketch {
 
 
 
+// sketch implementations
+
+
+
 object MinHash {
+
+	def apply(sets: IndexedSeq[Set[Int]], n: Int): MinHash[Int] =
+		apply(sets, randomHashFunctions(n))
+
 	def apply[T](sets: IndexedSeq[Set[T]], hashFunctions: Array[HashFunc[T]]): MinHash[T] = {
 
 		val sketchArray = new Array[Int](sets.length * hashFunctions.length)
@@ -138,6 +159,7 @@ object MinHash {
 }
 
 
+
 final class MinHash[T](val sketchArray: Array[Int], val sketchLength: Int, hashFunctions: Array[HashFunc[T]]) extends IntSketch {
 
 	def estimateSimilarity(idxA: Int, idxB: Int): Double =
@@ -147,13 +169,14 @@ final class MinHash[T](val sketchArray: Array[Int], val sketchLength: Int, hashF
 		sameBits(sketchArray, sketchArray, idxA, idxB, sketchLength)
 
 	def minSameBits(sim: Double): Int = {
-		require(sim >= 0.0 && sim <= 1, "similarity must be from (0, 1)")
+		require(sim >= 0.0 && sim <= 1.0, "similarity must be from (0, 1)")
 		sim * sketchLength toInt
 	}
 
 	def empty = new MinHash(null, sketchLength, hashFunctions)
 
 }
+
 
 
 object RandomHyperplanes {
@@ -179,6 +202,7 @@ object RandomHyperplanes {
 }
 
 
+
 final class RandomHyperplanes(val sketchArray: Array[Long], val bitsPerSketch: Int) extends BitSketch {
 	def estimateSimilarity(idxA: Int, idxB: Int): Double =
 		-1.0 + 2.0 * sameBits(idxA, idxB) / bitsPerSketch.toDouble
@@ -186,13 +210,14 @@ final class RandomHyperplanes(val sketchArray: Array[Long], val bitsPerSketch: I
 	def sameBits(idxA: Int, idxB: Int): Int =
 		sameBits(sketchArray, sketchArray, idxA, idxB, bitsPerSketch)
 
-	def minSameBits(sim: Double): Int = {
+	override def minSameBits(sim: Double): Int = {
 		require(sim >= -1 && sim <= 1, "similarity must be from (-1, 1)")
 		math.floor((sim + 1) / 2 * bitsPerSketch).toInt
 	}
 
 	def empty = new RandomHyperplanes(null, bitsPerSketch)
 }
+
 
 
 object RandomProjections {
@@ -212,6 +237,7 @@ object RandomProjections {
 }
 
 
+
 final class RandomProjections(val sketchArray: Array[Int], val sketchLength: Int, bucketSize: Double) extends IntSketch {
 
 	def estimateSimilarity(idxA: Int, idxB: Int): Double = ???
@@ -222,6 +248,7 @@ final class RandomProjections(val sketchArray: Array[Int], val sketchLength: Int
 	def empty = new RandomProjections(null, sketchLength, bucketSize)
 
 }
+
 
 
 object HammingDistance {
@@ -235,7 +262,8 @@ object HammingDistance {
 }
 
 
-final class HammingDistance64(val arr: Array[Long]) extends BitSketch {
+
+final class HammingDistance64(arr: Array[Long]) extends BitSketch {
 
 	def sketchArray = arr
 
@@ -243,7 +271,6 @@ final class HammingDistance64(val arr: Array[Long]) extends BitSketch {
 
 	def estimateSimilarity(idxA: Int, idxB: Int): Double = sameBits(idxA, idxB) / 64.0
 	def sameBits(idxA: Int, idxB: Int): Int = 64 - bitCount(arr(idxA) ^ arr(idxB))
-	def minSameBits(sim: Double): Int = ???
 
 	def empty = new HammingDistance64(null)
 }

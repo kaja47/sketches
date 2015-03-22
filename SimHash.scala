@@ -56,13 +56,13 @@ object SimHash {
 }
 
 
+
 final class SimHash(val sketchArray: Array[Long]) extends BitSketch {
 
 	val bitsPerSketch = 64
 
 	def estimateSimilarity(idxA: Int, idxB: Int): Double = sameBits(idxA, idxB) / 64.0
 	def sameBits(idxA: Int, idxB: Int): Int = 64 - bitCount(sketchArray(idxA) ^ sketchArray(idxB))
-	def minSameBits(sim: Double): Int = ???
 
 	def empty = new SimHash(null)
 
