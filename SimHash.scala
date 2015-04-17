@@ -8,12 +8,8 @@ object SimHash {
 	val md5 = new HashFuncLong[String] {
 		def apply(x: String): Long = {
 			val m = java.security.MessageDigest.getInstance("MD5")
-			m.reset()
-			m.update(x.getBytes())
-			val bytes = m.digest()
-
-			val bb = java.nio.ByteBuffer.wrap(bytes)
-			bb.getLong
+			val bytes = m.digest(x.getBytes())
+			java.nio.ByteBuffer.wrap(bytes).getLong
 		}
 	}
 
