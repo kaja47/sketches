@@ -3,13 +3,14 @@ package atrox.sketch
 import breeze.linalg.{ SparseVector, DenseVector, BitVector, normalize }
 import java.lang.System.arraycopy
 import java.lang.Long.{ bitCount, rotateLeft }
+import java.util.Arrays
 
 
-trait HashFunc[T] {
+trait HashFunc[T] extends Serializable {
 	def apply(x: T): Int
 }
 
-trait HashFuncLong[T] {
+trait HashFuncLong[T] extends Serializable {
 	def apply(x: T): Long
 }
 
@@ -111,6 +112,8 @@ abstract class IntSketch extends Sketch {
 	}
 
 	def empty: IntSketch
+
+	def skteches: Iterator[Array[Int]] = (0 until (sketchArray.length/sketchLength)).iterator map { i => Arrays.copyOfRange(sketchArray, i*sketchLength, (i+1)*sketchLength) }
 }
 
 
@@ -120,6 +123,49 @@ abstract class IntSketch extends Sketch {
 
 
 object MinHash {
+
+	def apply(sets: Array[Array[Int]], n: Int): MinHash[Int] =
+		apply(sets, randomHashFunctions(n))
+
+	def apply(sets: Array[Array[Int]], hashFunctions: Array[HashFunc[Int]]): MinHash[Int] = {
+		val sketchArray = new Array[Int](sets.length * hashFunctions.length)
+		var i = 0
+
+		for (set <- sets) {
+			i = writeMinHash(sketchArray, i, hashFunctions, set)
+		}
+
+		new MinHash(sketchArray, hashFunctions.length, hashFunctions)
+	}
+
+	/** @return end pos */
+	final def writeMinHash(sketchArray: Array[Int], startPos: Int, hashFunctions: Array[HashFunc[Int]], set: Array[Int]): Int = {
+		var i = startPos
+		var hf = 0
+		while (hf < hashFunctions.length) {
+			val f = hashFunctions(hf)
+			var min = Int.MaxValue
+			var j = 0
+			while (j < set.length) {
+				val h = f(set(j))
+				if (h < min) {
+					min = h
+				}
+				j += 1
+			}
+			sketchArray(i) = min
+			i += 1
+			hf += 1
+		}
+		i
+	}
+
+	def mkMinHash(set: Array[Int], hashFunctions: Array[HashFunc[Int]]): Array[Int] = {
+		val res = new Array[Int](hashFunctions.length)
+		writeMinHash(res, 0, hashFunctions, set)
+		res
+	}
+
 
 	def apply(sets: IndexedSeq[Set[Int]], n: Int): MinHash[Int] =
 		apply(sets, randomHashFunctions(n))
@@ -147,14 +193,19 @@ object MinHash {
 	}
 
 
-	def randomHashFunctions(n: Int): Array[HashFunc[Int]] =
+	def randomHashFunctions(n: Int, seed: Int = 123456, _M: Int = 32): Array[HashFunc[Int]] = {
+		val rand = new scala.util.Random(seed)
 		Array.fill(n) {
-			val a = BigInt.probablePrime(31, scala.util.Random).toInt
-			val b = BigInt.probablePrime(31, scala.util.Random).toInt
 			new HashFunc[Int] {
-				def apply(x: Int): Int = (a*x+b) // >>> (32-M)
+				val M = _M
+				val a = (rand.nextLong() & ((1L << 62)-1)) * 2 + 1       // random odd positive integer (a < 2^w)
+				val b = math.abs(rand.nextLong() & ((1L << (64 - M))-1)) // random non-negative integer (b < 2^(w-M)
+				def apply(x: Int): Int = ((a*x+b) >>> (64-M)).toInt
+
+				override def toString = s"HashFunc: $a * x + $b >> ${64-M}"
 			}
 		}
+	}
 
 }
 
