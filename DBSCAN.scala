@@ -3,17 +3,20 @@ package atrox
 import breeze.linalg._
 import breeze.numerics._
 import breeze.util.HashIndex
+import scala.specialized
+import scala.reflect.ClassTag
 
 
 object DBSCAN {
-	def apply[Point](dataset: IndexedSeq[Point], eps: Double, minPts: Int, dist: (Point, Point) => Double): (IndexedSeq[Map[Int, Point]], Map[Int, Point]) =
+	def apply[@specialized(Int, Long) Point: ClassTag](dataset: IndexedSeq[Point], eps: Double, minPts: Int, dist: (Point, Point) => Double): (IndexedSeq[Map[Int, Point]], Map[Int, Point]) =
 		new DBSCAN(dataset, eps, minPts, dist).run
 }
 
 
-class DBSCAN[Point](dataset: IndexedSeq[Point], val eps: Double, val minPts: Int, val dist: (Point, Point) => Double) {
+class DBSCAN[@specialized(Int, Long) Point: ClassTag](dataset: IndexedSeq[Point], val eps: Double, val minPts: Int, val dist: (Point, Point) => Double) {
 
-	val datasetArr = dataset.asInstanceOf[IndexedSeq[AnyRef]].toArray.asInstanceOf[Array[Point]]
+	//val datasetArr = dataset.asInstanceOf[IdexedSeq[AnyRef]].toArray.asInstanceOf[Array[Point]]
+	val datasetArr = dataset.toArray
 
 	val NotVisited = -1
 	val Noise = -2
@@ -79,8 +82,8 @@ class DBSCAN[Point](dataset: IndexedSeq[Point], val eps: Double, val minPts: Int
 		}
 	}
 
-	// return all points within P's eps-neighborhood (including P)
-	// if this method is overwriten, it must not return
+	/** Return all points within P's eps-neighborhood (including P).
+	  * If this method is overwriten, it must not return duplicate points. */
 	def regionQuery(pIdx: Int): IndexedSeq[Int] = {
 		var ppIdx = 0
 		val res = new collection.immutable.VectorBuilder[Int]
