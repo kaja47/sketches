@@ -303,13 +303,12 @@ final class RandomProjections(val sketchArray: Array[Int], val sketchLength: Int
 
 
 object HammingDistance {
-	def apply(arr: Array[Long], bits: Int): HammingDistance64 = {
-		if (bits != 64) {
-			???
+	def apply(arr: Array[Long], bits: Int): BitSketch =
+		if (bits == 64) {
+			new HammingDistance64(arr)
+		} else {
+			new HammingDistance(arr, bits)
 		}
-		
-		new HammingDistance64(arr)
-	}
 }
 
 
@@ -322,6 +321,20 @@ final class HammingDistance64(arr: Array[Long]) extends BitSketch {
 
 	def estimateSimilarity(idxA: Int, idxB: Int): Double = sameBits(idxA, idxB) / 64.0
 	def sameBits(idxA: Int, idxB: Int): Int = 64 - bitCount(arr(idxA) ^ arr(idxB))
+
+	def empty = new HammingDistance64(null)
+}
+
+
+final class HammingDistance(arr: Array[Long], val bitsPerSketch: Int) extends BitSketch {
+	require(bitsPerSketch % 64 == 0)
+
+	def sketchArray = arr
+
+	def estimateSimilarity(idxA: Int, idxB: Int): Double = sameBits(idxA, idxB) / bitsPerSketch.toDouble
+
+	def sameBits(idxA: Int, idxB: Int): Int =
+		sameBits(arr, arr, idxA, idxB, bitsPerSketch)
 
 	def empty = new HammingDistance64(null)
 }
