@@ -8,12 +8,12 @@ import scala.reflect.ClassTag
 
 
 object DBSCAN {
-	def apply[@specialized(Int, Long) Point: ClassTag](dataset: IndexedSeq[Point], eps: Double, minPts: Int, dist: (Point, Point) => Double): (IndexedSeq[Map[Int, Point]], Map[Int, Point]) =
+	def apply[Point: ClassTag](dataset: IndexedSeq[Point], eps: Double, minPts: Int, dist: (Point, Point) => Double): (IndexedSeq[Map[Int, Point]], Map[Int, Point]) =
 		new DBSCAN(dataset, eps, minPts, dist).run
 }
 
 
-class DBSCAN[@specialized(Int, Long) Point: ClassTag](dataset: IndexedSeq[Point], val eps: Double, val minPts: Int, val dist: (Point, Point) => Double) {
+class DBSCAN[Point: ClassTag](dataset: IndexedSeq[Point], val eps: Double, val minPts: Int, val dist: (Point, Point) => Double) {
 
 	//val datasetArr = dataset.asInstanceOf[IdexedSeq[AnyRef]].toArray.asInstanceOf[Array[Point]]
 	val datasetArr = dataset.toArray
