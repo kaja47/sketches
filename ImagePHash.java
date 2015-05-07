@@ -5,8 +5,11 @@ import java.awt.color.ColorSpace;
 import java.awt.image.BufferedImage;
 import java.awt.image.ColorConvertOp;
 import java.io.InputStream;
+import java.io.IOException;
 
 import javax.imageio.ImageIO;
+
+
 /*
  * pHash-like image hash. 
  * Author: Elliot Shepherd (elliot@jarofworms.com
@@ -43,10 +46,14 @@ public class ImagePHash {
 			coeff[i] = 1;
 		}
 	}
+
 	
-	public long[] apply(InputStream is) throws Exception {
-		BufferedImage img = ImageIO.read(is);
-		
+	public long[] apply(InputStream is) throws IOException {
+		return apply(ImageIO.read(is));
+	}
+
+
+	public long[] apply(BufferedImage img) {
 		/* 1. Reduce size. 
 		 * Like Average Hash, pHash starts with a small image. 
 		 * However, the image is larger than 8x8; 32x32 is a good size. 
