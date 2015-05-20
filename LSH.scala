@@ -21,7 +21,9 @@ object LSH {
 
 		val bandBits = if (_bandBits <= 0) sk.bitsPerSketch / bands else _bandBits
 		val bandStep = sk.bitsPerSketch / bands
-		val bandMask = (1 << bandBits) - 1
+
+		require(bandBits < 64)
+		val bandMask = (1L << bandBits) - 1
 		val bandSize = (1 << bandBits)
 
 		val longsLen = sk.bitsPerSketch / 64
@@ -35,8 +37,10 @@ object LSH {
 			}
 		}
 
-		val idxs     = Array.tabulate(bands * bandSize){ i => new Array[Int](sizes(i)) }
-		val sketches = Array.tabulate(bands * bandSize){ i => new Array[Long](sizes(i)) }
+		println(sizes.size)
+
+		val idxs     = Array.tabulate(bands * bandSize) { i => if (sizes(i) == 0) null else new Array[Int](sizes(i)) }
+		val sketches = Array.tabulate(bands * bandSize) { i => if (onlyIdxs)      null else new Array[Long](sizes(i)) }
 
 		val is = new Array[Int](bands * bandSize)
 
@@ -45,16 +49,18 @@ object LSH {
 				val h = ripBits(sk.sketchArray, sk.bitsPerSketch, i, b, bandStep, bandMask)
 				val bucket = b * bandSize + h
 				idxs    (bucket)(is(bucket)) = i
-				arraycopy(sk.sketchArray, i * longsLen, sketches(bucket), is(bucket) * longsLen, longsLen)
+				if (!onlyIdxs) {
+					arraycopy(sk.sketchArray, i * longsLen, sketches(bucket), is(bucket) * longsLen, longsLen)
+				}
 				is(bucket) += 1
 			}
 		}
 
-		new BitLSH(sk, idxs, sketches, sk.bitsPerSketch, bands, bandBits, bandStep)
+		new BitLSH(sk, idxs, sketches, sk.bitsPerSketch, bands, bandBits, bandStep, onlyIdxs)
 	}
 
 
-	def ripBits(sketchArray: Array[Long], bitsPerSketch: Int, i: Int, band: Int, bandStep: Int, bandMask: Int): Int = {
+	def ripBits(sketchArray: Array[Long], bitsPerSketch: Int, i: Int, band: Int, bandStep: Int, bandMask: Long): Int = {
 		// (rotateLeft(sketchArray(i), b*bandStep) & bandMask).toInt
 
 		val startbit = i * bitsPerSketch + band * bandStep
@@ -90,7 +96,7 @@ object LSH {
 		}
 
 		val idxs     = Array.tabulate(bands * bandSize) { i => if (sizes(i) == 0) null else new Array[Int](sizes(i)) }
-		val sketches = Array.tabulate(bands * bandSize) { i => if (onlyIdxs) null else new Array[Int](sizes(i)) }
+		val sketches = Array.tabulate(bands * bandSize) { i => if (onlyIdxs)      null else new Array[Int](sizes(i)) }
 
 		val is = new Array[Int](bands * bandSize)
 
@@ -165,7 +171,7 @@ abstract class LSH {
 	def allSimilarities(estimateThreshold: Double): Iterator[Sim]
 	def allSimilarities(estimateThreshold: Double, threshold: Double, similarityFunction: (Int, Int) => Double): Iterator[Sim]
 
-	def bucketSizes: (Double, Int, Int)
+	//def bucketSizes: (Double, Int, Int)
 }
 
 
@@ -235,7 +241,8 @@ final class IntLSH(
 final class BitLSH(
 		val sketch: BitSketch,
 		val idxs: Array[Array[Int]], val sketches: Array[Array[Long]],
-		val bitsPerSketch: Int, bands: Int, bandBits: Int, bandStep: Int
+		val bitsPerSketch: Int, val bands: Int, val bandBits: Int, val bandStep: Int,
+		val onlyIdxs: Boolean
 	) extends LSH with Serializable {
 
 	require(idxs.length == sketches.length)
@@ -277,48 +284,53 @@ final class BitLSH(
 
 	// will contain duplicates
 	def similarIndexes(idx: Int, estimateThreshold: Double): Array[Int] =
-		similarIndexes(sketch.sketchArray, idx, estimateThreshold)
+		similarIndexes(sketch.sketchArray, idx, estimateThreshold, 0.0, null)
 
 	// will contain duplicates
 	def similarIndexes(idx: Int, estimateThreshold: Double, threshold: Double, similarityFunction: (Int, Int) => Double): Array[Int] =
 		similarIndexes(sketch.sketchArray, idx, estimateThreshold, threshold, similarityFunction)
 
 	// will contain duplicates
-	def similarIndexes(sketchArray: Array[Long], idx: Int, estimateThreshold: Double): Array[Int] = {
-		val minBits = sketch.minSameBits(estimateThreshold)
-		val res = new collection.mutable.ArrayBuilder.ofInt
-
-		for ((idxs, skArr) <- candidates(sketchArray, idx)) {
-			var i = 0
-			while (i < idxs.length) {
-				val bits = sketch.sameBits(skArr, sketchArray, i, idx, sketch.bitsPerSketch)
-				if (bits >= minBits) {
-					res += idxs(i)
-				}
-				i += 1
-			}
-		}
-		res.result
-	}
+	def similarIndexes(sketchArray: Array[Long], idx: Int, estimateThreshold: Double): Array[Int] =
+		similarIndexes(sketch.sketchArray, idx, estimateThreshold, 0.0, null)
 
 	// will contain duplicates
 	def similarIndexes(sketchArray: Array[Long], idx: Int, estimateThreshold: Double, threshold: Double, similarityFunction: (Int, Int) => Double): Array[Int] = {
 		val minBits = sketch.minSameBits(estimateThreshold)
 		val res = new collection.mutable.ArrayBuilder.ofInt
 
-		for ((idxs, skArr) <- candidates(sketchArray, idx)) {
-			var i = 0
-			while (i < idxs.length) {
-				val bits = sketch.sameBits(skArr, sketchArray, i, idx, sketch.bitsPerSketch)
-				if (bits >= minBits) {
-					val sim = similarityFunction(idxs(i), idx)
-					if (sim >= threshold) {
-						res += idxs(i)
+		if (!onlyIdxs) {
+
+			for ((idxs, skArr) <- candidates(sketchArray, idx)) {
+				var i = 0
+				while (i < idxs.length) {
+					val bits = sketch.sameBits(skArr, sketchArray, i, idx, sketch.bitsPerSketch)
+					if (bits >= minBits) {
+						if (similarityFunction == null || similarityFunction(idxs(i), idx) >= threshold) {
+							res += idxs(i)
+						}
 					}
+					i += 1
 				}
-				i += 1
 			}
+
+		} else {
+
+			for ((idxs, _) <- candidates(sketchArray, idx)) {
+				var i = 0
+				while (i < idxs.length) {
+					val bits = sketch.sameBits(sketchArray, sketchArray, idxs(i), idx, sketch.bitsPerSketch)
+					if (bits >= minBits) {
+						if (similarityFunction == null || similarityFunction(idxs(i), idx) >= threshold) {
+							res += idxs(i)
+						}
+					}
+					i += 1
+				}
+			}
+
 		}
+
 		res.result
 	}
 
@@ -357,14 +369,19 @@ final class BitLSH(
 
 
 	def bucketSizes = {
-		val sum = idxs.map(_.length).sum
+		def len(xs: Array[Int]) = if (xs == null) 0 else xs.length
+
+		val sum = idxs.map(len).sum
 		val cnt = idxs.length
 		val avg = sum.toDouble / cnt
+		val zeros = idxs count (xs => xs == null || xs.length == 0)
 
-		val min = idxs.map(_.length).min
-		val max = idxs.map(_.length).max
+		val min = idxs.map(len).min
+		val max = idxs.map(len).max
 
-		(avg, min, max)
+		val lengths = idxs.map(len).sortBy(-_).take(100)
+
+		(avg, min, max, zeros, lengths.toVector)
 	}
 
 }

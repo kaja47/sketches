@@ -1,6 +1,7 @@
 package atrox.sketch
 
 import breeze.linalg.{ SparseVector, DenseVector, BitVector, normalize }
+import breeze.stats.distributions.Rand
 import java.lang.System.arraycopy
 import java.lang.Long.{ bitCount, rotateLeft }
 import java.util.Arrays
@@ -237,12 +238,26 @@ object RandomHyperplanes {
 
 		val dims = vectors.head.size
 
-		val randomHyperplanes = (0 until sketchLength).par map { _ => mkRandomHyperplane(dims) } seq
+		/*
+		val randomHyperplanes = (0 until sketchLength).par map { _ => mkRandomHyperplane(dims, null) } seq
 		val sketches = vectors.par map { vec => BitVector(randomHyperplanes map { rhp => (rhp dot vec) > 0.0 }: _*).data.toLongArray } toArray
 
 		val arr = new Array[Long](vectors.size * sketchLength / 64)
 		for (i <- 0 until vectors.size) {
 			arraycopy(sketches(i), 0, arr, i*sketchLength/64, sketchLength/64)
+		}
+		*/
+
+		// memory efficient version, computing one hyperplane at a time
+		val arr = new Array[Long](vectors.size * sketchLength / 64)
+		0 until sketchLength foreach { h =>
+			val rh = mkRandomHyperplane(dims)
+
+			for (i <- 0 until vectors.length) {
+				if ((rh dot vectors(i)) > 0.0) {
+					arr(i*sketchLength/64 + h / 64) |= (1L << (h % 64))
+				}
+			}
 		}
 
 		new RandomHyperplanes(arr, sketchLength)
@@ -256,14 +271,16 @@ object RandomHyperplanes {
 
 final class RandomHyperplanes(val sketchArray: Array[Long], val bitsPerSketch: Int) extends BitSketch {
 	def estimateSimilarity(idxA: Int, idxB: Int): Double =
-		-1.0 + 2.0 * sameBits(idxA, idxB) / bitsPerSketch.toDouble
+		//-1.0 + 2.0 * sameBits(idxA, idxB) / bitsPerSketch.toDouble
+		math.cos(math.Pi * (1 - sameBits(idxA, idxB) / bitsPerSketch.toDouble))
 
 	def sameBits(idxA: Int, idxB: Int): Int =
 		sameBits(sketchArray, sketchArray, idxA, idxB, bitsPerSketch)
 
 	override def minSameBits(sim: Double): Int = {
 		require(sim >= -1 && sim <= 1, "similarity must be from (-1, 1)")
-		math.floor((sim + 1) / 2 * bitsPerSketch).toInt
+		//math.floor((sim + 1) / 2 * bitsPerSketch).toInt
+		math.floor((1.0 - math.acos(sim) / math.Pi) * bitsPerSketch).toInt
 	}
 
 	def empty = new RandomHyperplanes(null, bitsPerSketch)
