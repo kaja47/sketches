@@ -1,33 +1,37 @@
 package atrox
 
-import breeze.linalg._
-import breeze.numerics._
-import breeze.util.HashIndex
 import scala.specialized
 import scala.reflect.ClassTag
 
 
 object DBSCAN {
-  def apply[Point: ClassTag](dataset: IndexedSeq[Point], eps: Double, minPts: Int, dist: (Point, Point) => Double): (IndexedSeq[Map[Int, Point]], Map[Int, Point]) =
+  def apply[Point: ClassTag](dataset: IndexedSeq[Point], eps: Double, minPts: Int, dist: (Point, Point) => Double): Result[Point] =
+    new DBSCAN(dataset.toArray, eps, minPts, dist).run
+
+  def apply[Point: ClassTag](dataset: Array[Point], eps: Double, minPts: Int, dist: (Point, Point) => Double): Result[Point] =
     new DBSCAN(dataset, eps, minPts, dist).run
+
+  def apply[Point: ClassTag](dataset: Array[Point], minPts: Int, regionQueryFunc: Int => IndexedSeq[Int]): Result[Point] =
+    new DBSCAN(dataset, -1, minPts, ???) {
+      override def regionQuery(pIdx: Int): IndexedSeq[Int] = regionQueryFunc(pIdx)
+    }.run
+
+  case class Result[Point](clusters: IndexedSeq[Map[Int, Point]], noise: Map[Int, Point])
 }
 
 
-class DBSCAN[Point: ClassTag](dataset: IndexedSeq[Point], val eps: Double, val minPts: Int, val dist: (Point, Point) => Double) {
-
-  //val datasetArr = dataset.asInstanceOf[IdexedSeq[AnyRef]].toArray.asInstanceOf[Array[Point]]
-  val datasetArr = dataset.toArray
+class DBSCAN[Point: ClassTag](dataset: Array[Point], val eps: Double, val minPts: Int, val dist: (Point, Point) => Double) {
 
   val NotVisited = -1
   val Noise = -2
 
   // NotVisited, Noise, clutserId
-  val pointClusters = Array.fill(datasetArr.size)(NotVisited)
+  val pointClusters = Array.fill(dataset.size)(NotVisited)
 
   // @return seq of clusters and seq of points without cluster
-  def run: (IndexedSeq[Map[Int, Point]], Map[Int, Point]) = {
+  def run: DBSCAN.Result[Point] = {
     var currentClusterId = 0
-    for (pIdx <- 0 until datasetArr.size) {
+    for (pIdx <- 0 until dataset.size) {
       if (pointClusters(pIdx) == NotVisited) {
         val neighborPts = regionQuery(pIdx)
         if (neighborPts.size < minPts) {
@@ -41,21 +45,16 @@ class DBSCAN[Point: ClassTag](dataset: IndexedSeq[Point], val eps: Double, val m
 
     assert(pointClusters forall (_ != NotVisited))
 
-    val inClusters = groupByKey(pointClusters.zipWithIndex filter {
-      case (cluster, idx) => cluster >= 0
-    } map {
-      case (cluster, idx) => (cluster, (idx, datasetArr(idx)))
-    }).values.toIndexedSeq.map(_.toMap)
+    val grouped = (
+      (0 until pointClusters.length)
+        .groupBy(pointClusters)
+        .mapValues { idxs => idxs.map { idx => (idx, dataset(idx)) }.toMap }
+    )
 
-    val noise = pointClusters.zipWithIndex filter {
-      case (cluster, idx) => cluster == Noise
-    } map {
-      case (cluster, idx) => (idx, datasetArr(idx))
-    } toMap
-
-    (inClusters, noise)
+    val clusters = (grouped - Noise).values.toVector
+    val noise    = grouped(Noise)
+    DBSCAN.Result(clusters, noise)
   }
-
 
   def expandCluster(pIdx: Int, _neighborPts: IndexedSeq[Int], clusterId: Int) = {
     val neighborPts = scala.collection.mutable.Set[Int](_neighborPts: _*)
@@ -85,11 +84,11 @@ class DBSCAN[Point: ClassTag](dataset: IndexedSeq[Point], val eps: Double, val m
     * If this method is overwriten, it must not return duplicate points. */
   def regionQuery(pIdx: Int): IndexedSeq[Int] = {
     val res = new collection.immutable.VectorBuilder[Int]
-    val p = datasetArr(pIdx)
+    val p = dataset(pIdx)
 
     var ppIdx = 0
-    while (ppIdx < datasetArr.length) {
-      if (dist(p, datasetArr(ppIdx)) <= eps) {
+    while (ppIdx < dataset.length) {
+      if (dist(p, dataset(ppIdx)) <= eps) {
         res += ppIdx
       }
       ppIdx += 1
@@ -98,7 +97,5 @@ class DBSCAN[Point: ClassTag](dataset: IndexedSeq[Point], val eps: Double, val m
     res.result
   }
 
-  def groupByKey[K, V](xs: Iterable[(K, V)]): Map[K, Seq[V]] =
-    xs groupBy (_._1) map { case (k, xs) => (k, xs map (_._2) toSeq) }
 
 }
