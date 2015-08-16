@@ -32,20 +32,86 @@ import java.lang.Math.{ min, max }
   *
   * Warning: Might contains subtle and not-so-soubtle errors.
   */
-class StringIntDictionary(initialCapacity: Int = 1024, val loadFactor: Double = 0.45) {
-  require(loadFactor > 0 && loadFactor < 1, "load factor must be in range from 0 to 1 (exclusive)")
+class StringIntDictionary(initialCapacity: Int = 1024, loadFactor: Double = 0.45)
+    extends StringDictionaryBase(initialCapacity, loadFactor, 3) {
 
   protected val segmentLength = 3
+
+  def put(str: CharSequence, value: Int): Unit =
+    _put(str, value)
+
+  def putIfAbsent(str: CharSequence, value: Int): Unit =
+    _putIfAbsent(str, value)
+
+  def get(str: CharSequence) =
+    _get(str).toInt
+
+  def getOrDefault(str: CharSequence, defaultValue: Int): Int =
+    _getOrDefault(str, defaultValue).toInt
+
+  def getOrElseUpdate(str: CharSequence, value: Int): Int =
+    _getOrElseUpdate(str, value).toInt
+
+  def iterator: Iterator[(String, Int)] = Iterator.tabulate(capacity) { i =>
+    val pos = i * segmentLength
+    if (stringLength(assoc, pos) == 0) null
+    else (makeString(assoc, pos), payload(assoc, pos).toInt)
+  } filter (_ != null)
+
+  protected def payload(assoc: Array[Int], pos: Int): Long = assoc(pos+2)
+  protected def setPayload(assoc: Array[Int], pos: Int, value: Long) = assoc(pos+2) = value.toInt
+}
+
+
+/** see StringIntDictionary
+  * This version stores every long value in 2 cells of int array. */
+class StringLongDictionary(initialCapacity: Int = 1024, loadFactor: Double = 0.45)
+    extends StringDictionaryBase(initialCapacity, loadFactor, 4) {
+
+  protected val segmentLength = 4
+
+  def put(str: CharSequence, value: Long): Unit =
+    _put(str, value)
+
+  def putIfAbsent(str: CharSequence, value: Long): Unit =
+    _putIfAbsent(str, value)
+
+  def get(str: CharSequence) =
+    _get(str)
+
+  def getOrDefault(str: CharSequence, defaultValue: Long): Long =
+    _getOrDefault(str, defaultValue)
+
+  def getOrElseUpdate(str: CharSequence, value: Long): Long =
+    _getOrElseUpdate(str, value)
+
+  def iterator: Iterator[(String, Long)] = Iterator.tabulate(capacity) { i =>
+    val pos = i * segmentLength
+    if (stringLength(assoc, pos) == 0) null
+    else (makeString(assoc, pos), payload(assoc, pos))
+  } filter (_ != null)
+
+  protected def payload(assoc: Array[Int], pos: Int): Long = assoc(pos+2).toLong << 32 | assoc(pos+3)
+  protected def setPayload(assoc: Array[Int], pos: Int, value: Long) = {
+    assoc(pos+2) = ((value >>> 32) & 0xffffffffL).toInt
+    assoc(pos+3) = (value & 0xffffffffL).toInt
+  }
+
+}
+abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor: Double = 0.45, sl: Int) {
+  require(loadFactor > 0 && loadFactor < 1, "load factor must be in range from 0 to 1 (exclusive)")
+
+  protected def segmentLength: Int
 
   protected var capacity = max(higherPowerOfTwo(initialCapacity), 16)
   protected var occupied = 0
   protected var maxOccupied = min(capacity * loadFactor toInt, capacity - 1)
   protected var charsTop = 0
 
-  protected var assoc = new Array[Int](capacity * segmentLength)
+  protected var assoc = new Array[Int](capacity * sl) // sl is equals to segmentLength, it's passed as arg to bypass early initialization problem
   protected var chars = new Array[Char](capacity * 8)
 
-  protected val defaultValue = 0
+  protected val defaultValue = 0L
 
   // debug information
   var _puts = 0L
@@ -59,23 +125,27 @@ class StringIntDictionary(initialCapacity: Int = 1024, val loadFactor: Double = 
     highestOneBit(x) << (if (highestOneBit(x) == x) 0 else 1)
 
 
-  def put(str: CharSequence, value: Int): Unit =
+  // public API methods
+  // These methods are protected because real public facing API might need to
+  // do some value mangling to translate Longs to a appropriate type.
+
+  protected def _put(str: CharSequence, value: Long): Unit =
     putInternal(str, value, true)
 
-  def putIfAbsent(str: CharSequence, value: Int): Unit =
+  protected def _putIfAbsent(str: CharSequence, value: Long): Unit =
     putInternal(str, value, false)
 
 
-  def get(str: CharSequence) = getOrDefault(str, defaultValue)
+  protected def _get(str: CharSequence) = _getOrDefault(str, defaultValue)
 
-  def getOrDefault(str: CharSequence, defaultValue: Int): Int = {
+  protected def _getOrDefault(str: CharSequence, defaultValue: Long): Long = {
     _gets += 1
 
     val pos = findPos(str, tryInline(str))
     if (stringLength(assoc, pos) > 0) payload(assoc, pos) else defaultValue
   }
 
-  def getOrElseUpdate(str: CharSequence, value: Int): Int =
+  protected def _getOrElseUpdate(str: CharSequence, value: Long): Long =
     putInternal(str, value, false)
 
   def contains(str: CharSequence): Boolean =
@@ -83,15 +153,10 @@ class StringIntDictionary(initialCapacity: Int = 1024, val loadFactor: Double = 
 
   def size = occupied
 
-  def iterator: Iterator[(String, Int)] = Iterator.tabulate(capacity) { i =>
-    val pos = i * segmentLength
-    if (stringLength(assoc, pos) == 0) null
-    else (makeString(assoc, pos), payload(assoc, pos))
-  } filter (_ != null)
 
+  // internals
 
-
-  protected def putInternal(str: CharSequence, value: Int, overwrite: Boolean): Int = {
+  protected def putInternal(str: CharSequence, value: Long, overwrite: Boolean): Long = {
     _puts += 1
     val word = tryInline(str)
 
@@ -235,7 +300,6 @@ class StringIntDictionary(initialCapacity: Int = 1024, val loadFactor: Double = 
   protected def inlinedWord(assoc: Array[Int], pos: Int): Long = (assoc(pos).toLong & 0xffffffffL) | ((assoc(pos+1).toLong & 0x3fffff00L) << 24)
 
   protected def inlinedChar(assoc: Array[Int], word: Long, i: Int): Int = ((word >>> (6 * i)) & ((1 << 6) - 1)).toInt
-  protected def payload(assoc: Array[Int], pos: Int) = assoc(pos+2)
   protected def isInlined(assoc: Array[Int], pos: Int) = (assoc(pos+1) & (1 << 30)) != 0
 
   protected def setStringLength(assoc: Array[Int], pos: Int, length: Int) = assoc(pos+1) = (assoc(pos+1) & 0xffffff00) | length
@@ -248,8 +312,10 @@ class StringIntDictionary(initialCapacity: Int = 1024, val loadFactor: Double = 
     //require(value < 64)
     word | (value.toLong << (6 * i))
   }
-  protected def setPayload(assoc: Array[Int], pos: Int, value: Int) = assoc(pos+2) = value
   protected def setInlined(assoc: Array[Int], pos: Int) = assoc(pos+1) |= (1 << 30)
+
+  protected def payload(assoc: Array[Int], pos: Int): Long
+  protected def setPayload(assoc: Array[Int], pos: Int, value: Long): Unit
 
 
   protected def equalOrEmptyInlined(pos: Int, str: CharSequence, inlinedStr: Long): Boolean = {
@@ -351,9 +417,11 @@ class StringIntDictionary(initialCapacity: Int = 1024, val loadFactor: Double = 
           _growProbes += 1
         }
 
-        assoc(pos)   = oldAssoc(oldPos)
-        assoc(pos+1) = oldAssoc(oldPos+1)
-        assoc(pos+2) = oldAssoc(oldPos+2)
+        var j = 0
+        while (j < segmentLength) {
+          assoc(pos+j) = oldAssoc(oldPos+j)
+          j += 1
+        }
       }
       oldPos += segmentLength
     }
