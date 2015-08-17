@@ -98,6 +98,30 @@ class StringLongDictionary(initialCapacity: Int = 1024, loadFactor: Double = 0.4
   }
 
 }
+
+
+class StringSet(initialCapacity: Int = 1024, loadFactor: Double = 0.45)
+    extends StringDictionaryBase(initialCapacity, loadFactor, 2) with (CharSequence => Boolean) {
+
+  protected val segmentLength = 2
+
+  def put(str: CharSequence): Unit = _put(str, 0)
+
+  def += (str: CharSequence): Unit = put(str)
+  def apply(str: CharSequence): Boolean = contains(str)
+
+  def iterator: Iterator[String] = Iterator.tabulate(capacity) { i =>
+    val pos = i * segmentLength
+    if (stringLength(assoc, pos) == 0) null
+    else makeString(assoc, pos)
+  } filter (_ != null)
+
+  protected def payload(assoc: Array[Int], pos: Int): Long = 0
+  protected def setPayload(assoc: Array[Int], pos: Int, value: Long) = {}
+}
+
+
+
 abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor: Double = 0.45, sl: Int) {
   require(loadFactor > 0 && loadFactor < 1, "load factor must be in range from 0 to 1 (exclusive)")
 
