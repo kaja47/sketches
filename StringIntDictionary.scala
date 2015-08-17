@@ -52,6 +52,15 @@ class StringIntDictionary(initialCapacity: Int = 1024, loadFactor: Double = 0.45
   def getOrElseUpdate(str: CharSequence, value: Int): Int =
     _getOrElseUpdate(str, value).toInt
 
+  /** Adds the given addition value to the value associated with the specified
+    * key, or defaultValue if this map contains no mapping for the key, and
+    * associates the resulting value with the key. */
+  def addValue(str: CharSequence, addition: Int): Int =
+    addValue(str, addition, defaultValue.toInt)
+
+  def addValue(str: CharSequence, addition: Int, defaultValue: Int): Int =
+    _addValue(str, addition, defaultValue).toInt
+
   def iterator: Iterator[(String, Int)] = Iterator.tabulate(capacity) { i =>
     val pos = i * segmentLength
     if (stringLength(assoc, pos) == 0) null
@@ -84,6 +93,12 @@ class StringLongDictionary(initialCapacity: Int = 1024, loadFactor: Double = 0.4
 
   def getOrElseUpdate(str: CharSequence, value: Long): Long =
     _getOrElseUpdate(str, value)
+
+  def addValue(str: CharSequence, addition: Long): Long =
+    addValue(str, addition, defaultValue)
+
+  def addValue(str: CharSequence, addition: Long, defaultValue: Long): Long =
+    _addValue(str, addition, defaultValue)
 
   def iterator: Iterator[(String, Long)] = Iterator.tabulate(capacity) { i =>
     val pos = i * segmentLength
@@ -164,13 +179,25 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
 
   protected def _getOrDefault(str: CharSequence, defaultValue: Long): Long = {
     _gets += 1
-
     val pos = findPos(str, tryInline(str))
-    if (stringLength(assoc, pos) > 0) payload(assoc, pos) else defaultValue
+    getInternal(pos, defaultValue)
   }
 
   protected def _getOrElseUpdate(str: CharSequence, value: Long): Long =
     putInternal(str, value, false)
+
+  protected def _addValue(str: CharSequence, addition: Long, defaultValue: Long): Long = {
+    val inlinedStr = tryInline(str)
+    var pos = findPos(str, inlinedStr)
+    val value = _add(getInternal(pos, defaultValue), addition)
+    putInternalToPos(str, inlinedStr, pos, value, true)
+    value
+  }
+
+  /** Performs addition on two values encoded into bits of two Long values */
+  protected def _add(x: Long, y: Long): Long = x + y
+
+
 
   def contains(str: CharSequence): Boolean =
     stringLength(assoc, findPos(str, tryInline(str))) > 0
@@ -180,11 +207,17 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
 
   // internals
 
+  protected def getInternal(pos: Int, defaultValue: Long): Long =
+    if (stringLength(assoc, pos) > 0) payload(assoc, pos) else defaultValue
+
   protected def putInternal(str: CharSequence, value: Long, overwrite: Boolean): Long = {
     _puts += 1
-    val word = tryInline(str)
+    val inlinedStr = tryInline(str)
+    var pos = findPos(str, inlinedStr)
+    putInternalToPos(str, inlinedStr, pos, value, overwrite)
+  }
 
-    var pos = findPos(str, word)
+  protected def putInternalToPos(str: CharSequence, inlinedStr: Long, pos: Int, value: Long, overwrite: Boolean): Long = {
     if (stringLength(assoc, pos) > 0) { // key `str` is already present
       if (overwrite) {
         setPayload(assoc, pos, value)
@@ -193,8 +226,8 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
         payload(assoc, pos)
       }
     } else { // empty slot
-      if (word != 0xffffffffffffffffL) {
-        setInlinedWord(assoc, pos, word)
+      if (inlinedStr != 0xffffffffffffffffL) {
+        setInlinedWord(assoc, pos, inlinedStr)
         setInlined(assoc, pos)
         setStringLength(assoc, pos, str.length)
 
