@@ -37,14 +37,17 @@ class StringIntDictionary(initialCapacity: Int = 1024, loadFactor: Double = 0.45
 
   protected val segmentLength = 3
 
+  /** Associates the specified value with the specified key in this map. */
   def put(str: CharSequence, value: Int): Unit =
     _put(str, value)
 
+  /** Associates the specified value with the specified key in this map if the
+    * key is not already present. */
   def putIfAbsent(str: CharSequence, value: Int): Unit =
     _putIfAbsent(str, value)
 
   def get(str: CharSequence) =
-    _get(str).toInt
+    _getOrDefault(str, defaultValue).toInt
 
   def getOrDefault(str: CharSequence, defaultValue: Int): Int =
     _getOrDefault(str, defaultValue).toInt
@@ -86,7 +89,7 @@ class StringLongDictionary(initialCapacity: Int = 1024, loadFactor: Double = 0.4
     _putIfAbsent(str, value)
 
   def get(str: CharSequence) =
-    _get(str)
+    _getOrDefault(str, defaultValue)
 
   def getOrDefault(str: CharSequence, defaultValue: Long): Long =
     _getOrDefault(str, defaultValue)
@@ -174,8 +177,6 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
   protected def _putIfAbsent(str: CharSequence, value: Long): Unit =
     putInternal(str, value, false)
 
-
-  protected def _get(str: CharSequence) = _getOrDefault(str, defaultValue)
 
   protected def _getOrDefault(str: CharSequence, defaultValue: Long): Long = {
     _gets += 1
@@ -321,6 +322,9 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
     new String(chars, off, len)
   }
 
+  /** Returns a position of slot with the specified key or the first empty slot,
+   * ie. the first slot where the requested pair is or where it could be
+   * inserted. */
   protected def findPos(str: CharSequence, inlined: Long) = {
     require(str.length != 0 && str.length < 256, "string must be non empty and shorter than 256 chars")
 
@@ -336,8 +340,8 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
         _probes += 1
       }
       pos
-    } else {
 
+    } else {
       val hash = stringHashCode(str)
       var i = hash & mask
       var pos = i * segmentLength
@@ -412,9 +416,6 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
       } else {
         return 0xffffffffffffffffL
       }
-      //val ok = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')
-      //if (!ok) return 0xffffffffffffffffL
-      //word = setInlinedChar(word, i, encode(ch))
       i += 1
     }
 
