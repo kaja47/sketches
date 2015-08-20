@@ -260,13 +260,20 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
 
 
   protected def stringHashCode(str: CharSequence): Int = {
-    var h = 0
-    var i = 0
-    while (i < str.length) {
-      h = 31 * h + str.charAt(i)
-      i += 1
+    if (str.isInstanceOf[String]) {
+      // String hashCode is defined to be computed as bellow,
+      // but its value might be cached in the object instance and this might
+      // give us a tiny performance boost
+      str.hashCode
+    } else {
+      var h = 0
+      var i = 0
+      while (i < str.length) {
+        h = 31 * h + str.charAt(i)
+        i += 1
+      }
+      h
     }
-    h
   }
 
   /** must produce same result as stringHashCode */
@@ -280,12 +287,12 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
     h
   }
 
-  protected def inlinedHashCode(inlinedStr: Long, length: Int): Int = {
+  protected def inlinedHashCode(inlinedStr: Long): Int = {
     // YOLO hashing scheme: it's faster but it produces more collisions on corpus of english words
     //inlinedStr.toInt ^ (inlinedStr >> 32).toInt
 
     // poor man's universal hashing
-    reverse(inlinedStr * 3542462394158182007L + 1775710242L).toInt
+    reverseBytes(inlinedStr * 3542462394158182007L + 1775710242L).toInt
 
     // slow and boring way
     //var h = 0
@@ -331,7 +338,7 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
     val mask = capacity - 1
 
     if (inlined != 0xffffffffffffffffL) {
-      val hash = inlinedHashCode(inlined, str.length)
+      val hash = inlinedHashCode(inlined)
       var i = hash & mask
       var pos = i * segmentLength
       while (!equalOrEmptyInlined(pos, str, inlined)) {
@@ -462,7 +469,7 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
       val len = stringLength(oldAssoc, oldPos)
       if (len > 0) {
         val hash = if (isInlined(oldAssoc, oldPos)) {
-          inlinedHashCode(inlinedWord(oldAssoc, oldPos), len)
+          inlinedHashCode(inlinedWord(oldAssoc, oldPos))
         } else {
           charArrHashCode(chars, stringOffset(oldAssoc, oldPos), len)
         }
