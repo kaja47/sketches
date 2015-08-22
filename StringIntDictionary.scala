@@ -46,6 +46,8 @@ class StringIntDictionary(initialCapacity: Int = 1024, loadFactor: Double = 0.45
   def putIfAbsent(str: CharSequence, value: Int): Unit =
     _putIfAbsent(str, value)
 
+  def remove(key: CharSequence): Int =
+    _remove(key).toInt
   def get(str: CharSequence) =
     _getOrDefault(str, defaultValue).toInt
 
@@ -85,6 +87,8 @@ class StringLongDictionary(initialCapacity: Int = 1024, loadFactor: Double = 0.4
   def put(str: CharSequence, value: Long): Unit =
     _put(str, value)
 
+  def remove(key: CharSequence): Long =
+    _remove(key)
   def putIfAbsent(str: CharSequence, value: Long): Unit =
     _putIfAbsent(str, value)
 
@@ -182,6 +186,12 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
   protected def _putIfAbsent(str: CharSequence, value: Long): Unit =
     putInternal(str, value, false)
 
+  protected def _remove(key: CharSequence): Long = {
+    _dels += 1
+    val inlinedKey = tryInline(key)
+    var pos = findPos(key, inlinedKey)
+    removePos(pos)
+  }
 
   protected def _getOrDefault(str: CharSequence, defaultValue: Long): Long = {
     _gets += 1
@@ -262,6 +272,27 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
     }
   }
 
+  protected def removePos(pos: Int): Long = {
+    def nextPos(pos: Int) = if (pos + segmentLength >= capacity * segmentLength) 0 else pos + segmentLength
+
+    if (!isAlive(assoc, pos)) return defaultValue
+
+    if (isInlined(assoc, pos) && isEmpty(assoc, nextPos(pos))) {
+      // Fast path: Element can be removed in place if it's inlined and it's
+      // the last element of probing chain. This way, direct removal doesn't
+      // break probing for other keys.
+      _fastdels += 1
+      val p = payload(assoc, pos)
+      setEmpty(assoc, pos)
+      occupied -= 1
+      p
+    } else {
+      val p = payload(assoc, pos)
+      setRemoved(assoc, pos)
+      removed += 1
+      p
+    }
+  }
   protected def encodeWord(str: CharSequence): Long = {
     var word = 0L
     var i = 0
