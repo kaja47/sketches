@@ -38,33 +38,34 @@ class StringIntDictionary(initialCapacity: Int = 1024, loadFactor: Double = 0.45
   protected val segmentLength = 3
 
   /** Associates the specified value with the specified key in this map. */
-  def put(str: CharSequence, value: Int): Unit =
-    _put(str, value)
+  def put(key: CharSequence, value: Int): Unit =
+    _put(key, value)
 
   /** Associates the specified value with the specified key in this map if the
     * key is not already present. */
-  def putIfAbsent(str: CharSequence, value: Int): Unit =
-    _putIfAbsent(str, value)
+  def putIfAbsent(key: CharSequence, value: Int): Unit =
+    _putIfAbsent(key, value)
 
   def remove(key: CharSequence): Int =
     _remove(key).toInt
-  def get(str: CharSequence) =
-    _getOrDefault(str, defaultValue).toInt
 
-  def getOrDefault(str: CharSequence, defaultValue: Int): Int =
-    _getOrDefault(str, defaultValue).toInt
+  def get(key: CharSequence) =
+    _getOrDefault(key, defaultValue).toInt
 
-  def getOrElseUpdate(str: CharSequence, value: Int): Int =
-    _getOrElseUpdate(str, value).toInt
+  def getOrDefault(key: CharSequence, defaultValue: Int): Int =
+    _getOrDefault(key, defaultValue).toInt
+
+  def getOrElseUpdate(key: CharSequence, value: Int): Int =
+    _getOrElseUpdate(key, value).toInt
 
   /** Adds the given addition value to the value associated with the specified
     * key, or defaultValue if this map contains no mapping for the key, and
     * associates the resulting value with the key. */
-  def addValue(str: CharSequence, addition: Int): Int =
-    addValue(str, addition, defaultValue.toInt)
+  def addValue(key: CharSequence, addition: Int): Int =
+    addValue(key, addition, defaultValue.toInt)
 
-  def addValue(str: CharSequence, addition: Int, defaultValue: Int): Int =
-    _addValue(str, addition, defaultValue).toInt
+  def addValue(key: CharSequence, addition: Int, defaultValue: Int): Int =
+    _addValue(key, addition, defaultValue).toInt
 
   def iterator: Iterator[(String, Int)] = Iterator.tabulate(capacity) { i =>
     val pos = i * segmentLength
@@ -84,28 +85,29 @@ class StringLongDictionary(initialCapacity: Int = 1024, loadFactor: Double = 0.4
 
   protected val segmentLength = 4
 
-  def put(str: CharSequence, value: Long): Unit =
-    _put(str, value)
+  def put(key: CharSequence, value: Long): Unit =
+    _put(key, value)
+
+  def putIfAbsent(key: CharSequence, value: Long): Unit =
+    _putIfAbsent(key, value)
 
   def remove(key: CharSequence): Long =
     _remove(key)
-  def putIfAbsent(str: CharSequence, value: Long): Unit =
-    _putIfAbsent(str, value)
 
-  def get(str: CharSequence) =
-    _getOrDefault(str, defaultValue)
+  def get(key: CharSequence) =
+    _getOrDefault(key, defaultValue)
 
-  def getOrDefault(str: CharSequence, defaultValue: Long): Long =
-    _getOrDefault(str, defaultValue)
+  def getOrDefault(key: CharSequence, defaultValue: Long): Long =
+    _getOrDefault(key, defaultValue)
 
-  def getOrElseUpdate(str: CharSequence, value: Long): Long =
-    _getOrElseUpdate(str, value)
+  def getOrElseUpdate(key: CharSequence, value: Long): Long =
+    _getOrElseUpdate(key, value)
 
-  def addValue(str: CharSequence, addition: Long): Long =
-    addValue(str, addition, defaultValue)
+  def addValue(key: CharSequence, addition: Long): Long =
+    addValue(key, addition, defaultValue)
 
-  def addValue(str: CharSequence, addition: Long, defaultValue: Long): Long =
-    _addValue(str, addition, defaultValue)
+  def addValue(key: CharSequence, addition: Long, defaultValue: Long): Long =
+    _addValue(key, addition, defaultValue)
 
   def iterator: Iterator[(String, Long)] = Iterator.tabulate(capacity) { i =>
     val pos = i * segmentLength
@@ -127,10 +129,10 @@ class StringSet(initialCapacity: Int = 1024, loadFactor: Double = 0.45)
 
   protected val segmentLength = 2
 
-  def put(str: CharSequence): Unit = _put(str, 0)
+  def put(key: CharSequence): Unit = _put(key, 0)
 
-  def += (str: CharSequence): Unit = put(str)
-  def apply(str: CharSequence): Boolean = contains(str)
+  def += (key: CharSequence): Unit = put(key)
+  def apply(key: CharSequence): Boolean = contains(key)
 
   def iterator: Iterator[String] = Iterator.tabulate(capacity) { i =>
     val pos = i * segmentLength
@@ -180,11 +182,11 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
   // These methods are protected because real public facing API might need to
   // do some value mangling to translate Longs to a appropriate type.
 
-  protected def _put(str: CharSequence, value: Long): Unit =
-    putInternal(str, value, true)
+  protected def _put(key: CharSequence, value: Long): Unit =
+    putInternal(key, value, true)
 
-  protected def _putIfAbsent(str: CharSequence, value: Long): Unit =
-    putInternal(str, value, false)
+  protected def _putIfAbsent(key: CharSequence, value: Long): Unit =
+    putInternal(key, value, false)
 
   protected def _remove(key: CharSequence): Long = {
     _dels += 1
@@ -193,20 +195,21 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
     removePos(pos)
   }
 
-  protected def _getOrDefault(str: CharSequence, defaultValue: Long): Long = {
+
+  protected def _getOrDefault(key: CharSequence, defaultValue: Long): Long = {
     _gets += 1
-    val pos = findPos(str, tryInline(str))
+    val pos = findPos(key, tryInline(key))
     getInternal(pos, defaultValue)
   }
 
-  protected def _getOrElseUpdate(str: CharSequence, value: Long): Long =
-    putInternal(str, value, false)
+  protected def _getOrElseUpdate(key: CharSequence, value: Long): Long =
+    putInternal(key, value, false)
 
-  protected def _addValue(str: CharSequence, addition: Long, defaultValue: Long): Long = {
-    val inlinedStr = tryInline(str)
-    var pos = findPos(str, inlinedStr)
+  protected def _addValue(key: CharSequence, addition: Long, defaultValue: Long): Long = {
+    val inlinedKey = tryInline(key)
+    var pos = findPos(key, inlinedKey)
     val value = _add(getInternal(pos, defaultValue), addition)
-    putInternalToPos(str, inlinedStr, pos, value, true)
+    putInternalToPos(key, inlinedKey, pos, value, true)
     value
   }
 
@@ -215,8 +218,8 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
 
 
 
-  def contains(str: CharSequence): Boolean =
-    isAlive(assoc, findPos(str, tryInline(str)))
+  def contains(key: CharSequence): Boolean =
+    isAlive(assoc, findPos(key, tryInline(key)))
 
   def size = occupied - removed
 
@@ -226,15 +229,15 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
   protected def getInternal(pos: Int, defaultValue: Long): Long =
     if (isAlive(assoc, pos)) payload(assoc, pos) else defaultValue
 
-  protected def putInternal(str: CharSequence, value: Long, overwrite: Boolean): Long = {
+  protected def putInternal(key: CharSequence, value: Long, overwrite: Boolean): Long = {
     _puts += 1
-    val inlinedStr = tryInline(str)
-    var pos = findPos(str, inlinedStr)
-    putInternalToPos(str, inlinedStr, pos, value, overwrite)
+    val inlinedKey = tryInline(key)
+    var pos = findPos(key, inlinedKey)
+    putInternalToPos(key, inlinedKey, pos, value, overwrite)
   }
 
-  protected def putInternalToPos(str: CharSequence, inlinedStr: Long, pos: Int, value: Long, overwrite: Boolean): Long = {
-    if (isAlive(assoc, pos)) { // key `str` is already present
+  protected def putInternalToPos(key: CharSequence, inlinedKey: Long, pos: Int, value: Long, overwrite: Boolean): Long = {
+    if (isAlive(assoc, pos)) { // key `key` is already present
       if (overwrite) {
         setPayload(assoc, pos, value)
         value
@@ -245,15 +248,15 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
       // this is checked early because alive bit is overwritten by setInlinedWord
       val isrem = isRemoved(assoc, pos)
 
-      if (inlinedStr != 0xffffffffffffffffL) {
-        setInlinedWord(assoc, pos, inlinedStr)
+      if (inlinedKey != 0xffffffffffffffffL) {
+        setInlinedWord(assoc, pos, inlinedKey)
         setInlined(assoc, pos)
-        setInlinedStringLength(assoc, pos, str.length)
+        setInlinedStringLength(assoc, pos, key.length)
 
       } else {
-        val offset = putString(str)
+        val offset = putString(key)
         setStringOffset(assoc, pos, offset)
-        setPackedStringLength(assoc, pos, str.length)
+        setPackedStringLength(assoc, pos, key.length)
       }
       if (!isrem) {
         occupied += 1
@@ -293,28 +296,29 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
       p
     }
   }
-  protected def encodeWord(str: CharSequence): Long = {
+
+  protected def encodeWord(key: CharSequence): Long = {
     var word = 0L
     var i = 0
-    while (i < str.length) {
-      word = setInlinedChar(word, i, encode(str.charAt(i)))
+    while (i < key.length) {
+      word = setInlinedChar(word, i, encode(key.charAt(i)))
       i += 1
     }
     word
   }
 
 
-  protected def stringHashCode(str: CharSequence): Int = {
-    if (str.isInstanceOf[String]) {
+  protected def stringHashCode(key: CharSequence): Int = {
+    if (key.isInstanceOf[String]) {
       // String hashCode is defined to be computed as bellow,
       // but its value might be cached in the object instance and this might
       // give us a tiny performance boost
-      str.hashCode
+      key.hashCode
     } else {
       var h = 0
       var i = 0
-      while (i < str.length) {
-        h = 31 * h + str.charAt(i)
+      while (i < key.length) {
+        h = 31 * h + key.charAt(i)
         i += 1
       }
       h
@@ -332,18 +336,18 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
     h
   }
 
-  protected def inlinedHashCode(inlinedStr: Long): Int = {
+  protected def inlinedHashCode(inlinedKey: Long): Int = {
     // YOLO hashing scheme: it's faster but it produces more collisions on corpus of english words
-    //inlinedStr.toInt ^ (inlinedStr >> 32).toInt
+    //inlinedKey.toInt ^ (inlinedKey >> 32).toInt
 
     // poor man's universal hashing
-    reverseBytes(inlinedStr * 3542462394158182007L + 1775710242L).toInt
+    reverseBytes(inlinedKey * 3542462394158182007L + 1775710242L).toInt
 
     // slow and boring way
     //var h = 0
     //var i = 0
     //while (i < length) {
-    //  h = 31 * h + decode(inlinedChar(inlinedStr, i))
+    //  h = 31 * h + decode(inlinedChar(inlinedKey, i))
     //  i += 1
     //}
     //h
@@ -377,14 +381,14 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
   /** Returns a position of a slot with the specified key or the first empty
     * slot or removed slot that used to have the specified key. ie. the first
     * slot where the requested pair is located or where it could be inserted. */
-  protected def findPos(str: CharSequence, inlined: Long) = {
+  protected def findPos(key: CharSequence, inlined: Long) = {
     val mask = capacity - 1
 
     if (inlined != 0xffffffffffffffffL) {
       val hash = inlinedHashCode(inlined)
       var i = hash & mask
       var pos = i * segmentLength
-      while (!equalOrEmptyInlined(pos, str, inlined)) {
+      while (!equalOrEmptyInlined(pos, key, inlined)) {
         i = (i + 1) & mask ;
         pos = i * segmentLength ;
         _probes += 1
@@ -392,10 +396,10 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
       pos
 
     } else {
-      val hash = stringHashCode(str)
+      val hash = stringHashCode(key)
       var i = hash & mask
       var pos = i * segmentLength
-      while (!equalOrEmptyNotInlined(pos, str)) {
+      while (!equalOrEmptyNotInlined(pos, key)) {
         i = (i + 1) & mask ;
         pos = i * segmentLength ;
         _probes += 1
@@ -443,36 +447,36 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
     ((word >>> (6 * i)) & ((1 << 6) - 1)).toInt
 
   // overwrites inlined/alive bits and length
-  protected def setInlinedWord(assoc: Array[Int], pos: Int, inlinedStr: Long) = {
-    assoc(pos)   = (inlinedStr & 0xffffffff).toInt
-    assoc(pos+1) = (inlinedStr >>> 24).toInt
+  protected def setInlinedWord(assoc: Array[Int], pos: Int, inlinedKey: Long) = {
+    assoc(pos)   = (inlinedKey & 0xffffffff).toInt
+    assoc(pos+1) = (inlinedKey >>> 24).toInt
   }
-  private def setInlinedChar(inlinedStr: Long, i: Int, value: Int): Long = {
+  private def setInlinedChar(inlinedKey: Long, i: Int, value: Int): Long = {
     //require(value < 64)
-    inlinedStr | (value.toLong << (6 * i))
+    inlinedKey | (value.toLong << (6 * i))
   }
 
   protected def payload(assoc: Array[Int], pos: Int): Long
   protected def setPayload(assoc: Array[Int], pos: Int, value: Long): Unit
 
 
-  protected def equalOrEmptyInlined(pos: Int, str: CharSequence, inlinedStr: Long): Boolean = {
+  protected def equalOrEmptyInlined(pos: Int, key: CharSequence, inlinedKey: Long): Boolean = {
     val inl   = isInlined(assoc, pos)
 
-    isEmpty(assoc, pos) || (inl && inlinedWord(assoc, pos) == inlinedStr)
+    isEmpty(assoc, pos) || (inl && inlinedWord(assoc, pos) == inlinedKey)
   }
 
   /** In this case removed elements are ignored */
-  protected def equalOrEmptyNotInlined(pos: Int, str: CharSequence): Boolean = {
+  protected def equalOrEmptyNotInlined(pos: Int, key: CharSequence): Boolean = {
     if (isEmpty(assoc, pos)) return true
     if (isInlined(assoc, pos)) return false
     val len = packedStringLength(assoc, pos)
-    if (len != str.length) return false
+    if (len != key.length) return false
 
     val off = stringOffset(assoc, pos)
     var i = 0
     while (i < len) {
-      if (chars(off+i) != str.charAt(i)) return false
+      if (chars(off+i) != key.charAt(i)) return false
       i += 1
     }
 
@@ -480,13 +484,13 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
   }
 
 
-  protected def tryInline(str: CharSequence): Long = {
-    if (str.length > 9) return 0xffffffffffffffffL
+  protected def tryInline(key: CharSequence): Long = {
+    if (key.length > 9) return 0xffffffffffffffffL
 
     var word = 0L
     var i = 0
-    while (i < str.length) {
-      val ch = str.charAt(i)
+    while (i < key.length) {
+      val ch = key.charAt(i)
       if (ch < 128 && encodeTable(ch) != -1) {
         word = setInlinedChar(word, i, encodeTable(ch).toInt)
       } else {
@@ -579,19 +583,19 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
 
 
   /** puts string into the `chars` array and returns it's position */
-  protected def putString(str: CharSequence): Int = {
-    while (charsTop + str.length > chars.length) {
+  protected def putString(key: CharSequence): Int = {
+    while (charsTop + key.length > chars.length) {
       growChars()
     }
 
     var i = 0
-    while (i < str.length) {
-      chars(charsTop+i) = str.charAt(i)
+    while (i < key.length) {
+      chars(charsTop+i) = key.charAt(i)
       i += 1
     }
 
     val pos = charsTop
-    charsTop += str.length
+    charsTop += key.length
     pos
   }
 
