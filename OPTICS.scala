@@ -1,4 +1,4 @@
-package devblogy
+package atrox
 
 import breeze.linalg._
 import breeze.numerics._
