@@ -209,7 +209,7 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
     val inlinedKey = tryInline(key)
     var pos = findPos(key, inlinedKey)
     val value = _add(getInternal(pos, defaultValue), addition)
-    putInternalToPos(key, inlinedKey, pos, value, true)
+    putInternalToPos(key, inlinedKey, key.length, pos, value, true)
     value
   }
 
@@ -233,10 +233,10 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
     _puts += 1
     val inlinedKey = tryInline(key)
     var pos = findPos(key, inlinedKey)
-    putInternalToPos(key, inlinedKey, pos, value, overwrite)
+    putInternalToPos(key, inlinedKey, key.length, pos, value, overwrite)
   }
 
-  protected def putInternalToPos(key: CharSequence, inlinedKey: Long, pos: Int, value: Long, overwrite: Boolean): Long = {
+  protected def putInternalToPos(key: CharSequence, inlinedKey: Long, keyLength: Int, pos: Int, value: Long, overwrite: Boolean): Long = {
     if (isAlive(assoc, pos)) { // key `key` is already present
       if (overwrite) {
         setPayload(assoc, pos, value)
@@ -251,12 +251,12 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
       if (inlinedKey != 0xffffffffffffffffL) {
         setInlinedWord(assoc, pos, inlinedKey)
         setInlined(assoc, pos)
-        setInlinedStringLength(assoc, pos, key.length)
+        setInlinedStringLength(assoc, pos, keyLength)
 
       } else {
-        val offset = putString(key)
+        val offset = putString(key) // todo - if reusing deleted slot this is not necessary
         setStringOffset(assoc, pos, offset)
-        setPackedStringLength(assoc, pos, key.length)
+        setPackedStringLength(assoc, pos, keyLength)
       }
       if (!isrem) {
         occupied += 1
@@ -381,32 +381,46 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
   /** Returns a position of a slot with the specified key or the first empty
     * slot or removed slot that used to have the specified key. ie. the first
     * slot where the requested pair is located or where it could be inserted. */
-  protected def findPos(key: CharSequence, inlined: Long) = {
-    val mask = capacity - 1
-
-    if (inlined != 0xffffffffffffffffL) {
-      val hash = inlinedHashCode(inlined)
-      var i = hash & mask
-      var pos = i * segmentLength
-      while (!equalOrEmptyInlined(pos, key, inlined)) {
-        i = (i + 1) & mask ;
-        pos = i * segmentLength ;
-        _probes += 1
-      }
-      pos
-
+  protected def findPos(key: CharSequence, inlinedKey: Long) =
+    if (inlinedKey != 0xffffffffffffffffL) {
+      findPosOfInlined(inlinedKey)
     } else {
-      val hash = stringHashCode(key)
-      var i = hash & mask
-      var pos = i * segmentLength
-      while (!equalOrEmptyNotInlined(pos, key)) {
-        i = (i + 1) & mask ;
-        pos = i * segmentLength ;
-        _probes += 1
-      }
-      pos
+      findPosOfPacked(key)
     }
 
+  /** This method mutates CharArr's offset and length */
+  protected def findPosOf(assoc: Array[Int], pos: Int, charArr: CharArr): Int =
+    if (isInlined(assoc, pos)) {
+      findPosOfInlined(inlinedWord(assoc, pos))
+    } else {
+      focusCharArr(assoc, pos, charArr)
+      findPosOfPacked(charArr)
+    }
+
+  protected def findPosOfInlined(inlined: Long) = {
+    val mask = capacity - 1
+    val hash = inlinedHashCode(inlined)
+    var i = hash & mask
+    var pos = i * segmentLength
+    while (!equalOrEmptyInlined(pos, inlined)) {
+      i = (i + 1) & mask ;
+      pos = i * segmentLength ;
+      _probes += 1
+    }
+    pos
+  }
+
+  protected def findPosOfPacked(key: CharSequence) = {
+    val mask = capacity - 1
+    val hash = stringHashCode(key)
+    var i = hash & mask
+    var pos = i * segmentLength
+    while (!equalOrEmptyPacked(pos, key)) {
+      i = (i + 1) & mask ;
+      pos = i * segmentLength ;
+      _probes += 1
+    }
+    pos
   }
 
   // pos refers to the first element in a segment
@@ -459,15 +473,19 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
   protected def payload(assoc: Array[Int], pos: Int): Long
   protected def setPayload(assoc: Array[Int], pos: Int, value: Long): Unit
 
+  protected def tryGetInlinedKey(assoc: Array[Int], pos: Int) =
+    if (isInlined(assoc, pos)) inlinedWord(assoc, pos) else 0xffffffffffffffffL
 
-  protected def equalOrEmptyInlined(pos: Int, key: CharSequence, inlinedKey: Long): Boolean = {
-    val inl   = isInlined(assoc, pos)
+  protected def getStringLength(assoc: Array[Int], pos: Int) =
+    if (isInlined(assoc, pos)) inlinedStringLength(assoc, pos) else packedStringLength(assoc, pos)
 
-    isEmpty(assoc, pos) || (inl && inlinedWord(assoc, pos) == inlinedKey)
-  }
+
+
+  protected def equalOrEmptyInlined(pos: Int, inlinedKey: Long): Boolean =
+    isEmpty(assoc, pos) || (isInlined(assoc, pos) && inlinedWord(assoc, pos) == inlinedKey)
 
   /** In this case removed elements are ignored */
-  protected def equalOrEmptyNotInlined(pos: Int, key: CharSequence): Boolean = {
+  protected def equalOrEmptyPacked(pos: Int, key: CharSequence): Boolean = {
     if (isEmpty(assoc, pos)) return true
     if (isInlined(assoc, pos)) return false
     val len = packedStringLength(assoc, pos)
@@ -605,4 +623,88 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
     chars = newChars
   }
 
+
+  // set ops
+
+  /** Computes size of intersection of this and one other dictionary.
+    * Intersection is counted using dictionaries' keys in case of
+    * StringIntDictionary or set elements in case of StringSet*/
+  def intersectionSize(that: StringDictionaryBase): Int = {
+    val small = if (this.size < that.size) this else that
+    val big   = if (this.size < that.size) that else this
+    var count = 0
+
+    // iterate through small set, lookup elements in big set
+    var smallPos = 0
+    val smallEnd = small.capacity * small.segmentLength
+    val smallCharArr = new CharArr(small.chars, 0, 0)
+
+    while (smallPos < smallEnd) {
+      if (isAlive(small.assoc, smallPos)) {
+        val bigPos = big.findPosOf(small.assoc, smallPos, smallCharArr)
+        if (isAlive(big.assoc, bigPos)) {
+          count += 1
+        }
+      }
+      smallPos += small.segmentLength
+    }
+
+    count
+  }
+
+  def unionSize(that: StringSet): Int =
+    this.size + that.size - this.intersectionSize(that)
+
+
+  def intersection(that: StringSet): StringSet = {
+    val small = if (this.size < that.size) this else that
+    val big   = if (this.size < that.size) that else this
+
+    // iterate through small set, lookup elements in big set
+    var smallPos = 0
+    val smallEnd = small.capacity * small.segmentLength
+    val smallCharArr = new CharArr(small.chars, 0, 0)
+
+    val res = new StringSet(initialCapacity = small.size, loadFactor = small.loadFactor)
+
+    while (smallPos < smallEnd) {
+      if (isAlive(small.assoc, smallPos)) {
+        val bigPos = big.findPosOf(small.assoc, smallPos, smallCharArr)
+        if (isAlive(big.assoc, bigPos)) {
+          // following focusCharArr is not really necessary because charArr is
+          // already focused by findPosOf, but I keep it there to be safe
+          focusCharArr(small.assoc, smallPos, smallCharArr)
+          val inlinedKey = tryGetInlinedKey(small.assoc, smallPos)
+          val len = getStringLength(small.assoc, smallPos)
+          val pos = res.findPos(smallCharArr, inlinedKey)
+          res.putInternalToPos(smallCharArr, inlinedKey, len, pos, 0L, true)
+        }
+      }
+      smallPos += small.segmentLength
+    }
+
+    res
+  }
+
+
+
+
+
+  protected def focusCharArr(assoc: Array[Int], pos: Int, charArr: CharArr) = {
+    val off = stringOffset(assoc, pos)
+    val len = packedStringLength(assoc, pos)
+    charArr.set(off, len)
+  }
+}
+
+
+
+/** CharSequence wrapper around internal chars array.
+  * len is not length or the whole array, but only logical subarray */
+protected class CharArr(chars: Array[Char], var off: Int, var len: Int) extends CharSequence {
+  def charAt(idx: Int): Char = chars(off+idx) // let's hope nobody ever access past off+len
+  def length(): Int = len
+  def subSequence(x$1: Int,x$2: Int): CharSequence = ???
+
+  def set(_off: Int, _len: Int) = { off = _off ; len = _len }
 }
