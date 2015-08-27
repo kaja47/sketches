@@ -4,6 +4,7 @@ import scala.language.postfixOps
 import java.lang.Integer.highestOneBit
 import java.lang.Long.{ reverse, reverseBytes }
 import java.lang.Math.{ min, max }
+import java.util.Arrays
 
 
 /** Class StringIntDictionary implements idiosyncratic map with string keys and
@@ -73,13 +74,19 @@ class StringIntDictionary(initialCapacity: Int = 1024, loadFactor: Double = 0.45
     else (makeString(assoc, pos), payload(assoc, pos).toInt)
   } filter (_ != null)
 
+  override def toString = iterator.mkString("StringIntDictionary(", ",", ")")
+
   protected def payload(assoc: Array[Int], pos: Int): Long = assoc(pos+2)
   protected def setPayload(assoc: Array[Int], pos: Int, value: Long) = assoc(pos+2) = value.toInt
 }
 
 
 /** see StringIntDictionary
-  * This version stores every long value in 2 cells of int array. */
+  *
+  * This version stores every long value in 2 cells of int array. As a result
+  * of this fact, there's possibility of word tearing of values in badly
+  * synchronized programs. But word tearing might happen with keys no matter
+  * what */
 class StringLongDictionary(initialCapacity: Int = 1024, loadFactor: Double = 0.45)
     extends StringDictionaryBase(initialCapacity, loadFactor, 4) {
 
@@ -115,6 +122,8 @@ class StringLongDictionary(initialCapacity: Int = 1024, loadFactor: Double = 0.4
     else (makeString(assoc, pos), payload(assoc, pos))
   } filter (_ != null)
 
+  override def toString = iterator.mkString("StringLongDictionary(", ",", ")")
+
   protected def payload(assoc: Array[Int], pos: Int): Long = assoc(pos+2).toLong << 32 | assoc(pos+3)
   protected def setPayload(assoc: Array[Int], pos: Int, value: Long) = {
     assoc(pos+2) = ((value >>> 32) & 0xffffffffL).toInt
@@ -132,6 +141,7 @@ class StringSet(initialCapacity: Int = 1024, loadFactor: Double = 0.45)
   def put(key: CharSequence): Unit = _put(key, 0)
 
   def += (key: CharSequence): Unit = put(key)
+  def ++= (keys: CharSequence*): Unit = for (key <- keys) this += key
   def apply(key: CharSequence): Boolean = contains(key)
 
   def iterator: Iterator[String] = Iterator.tabulate(capacity) { i =>
@@ -140,9 +150,12 @@ class StringSet(initialCapacity: Int = 1024, loadFactor: Double = 0.45)
     else makeString(assoc, pos)
   } filter (_ != null)
 
+  override def toString = iterator.mkString("StringSet(", ",", ")")
+
   protected def payload(assoc: Array[Int], pos: Int): Long = 0
   protected def setPayload(assoc: Array[Int], pos: Int, value: Long) = {}
 }
+
 
 
 
@@ -254,9 +267,15 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
         setInlinedStringLength(assoc, pos, keyLength)
 
       } else {
-        val offset = putString(key) // todo - if reusing deleted slot this is not necessary
-        setStringOffset(assoc, pos, offset)
-        setPackedStringLength(assoc, pos, keyLength)
+        // If deleted slot is reused, packed string is still present in the
+        // chars array. Storing the key once more would cause a memory leak.
+        // Although this is not necessary right now, because `findPos` is
+        // always skipping deleted packed slots.
+        if (!isrem) {
+          val offset = putString(key)
+          setStringOffset(assoc, pos, offset)
+          setPackedStringLength(assoc, pos, keyLength)
+        }
       }
       if (!isrem) {
         occupied += 1
@@ -484,10 +503,13 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
   protected def equalOrEmptyInlined(pos: Int, inlinedKey: Long): Boolean =
     isEmpty(assoc, pos) || (isInlined(assoc, pos) && inlinedWord(assoc, pos) == inlinedKey)
 
-  /** In this case removed elements are ignored */
+  /** In this case removed elements are ignored. We are assuming that there are
+    * only few packed keys and we dont"want to pay the price of random memory
+    * acceesses to tookup every deleted packed key. */
   protected def equalOrEmptyPacked(pos: Int, key: CharSequence): Boolean = {
     if (isEmpty(assoc, pos)) return true
     if (isInlined(assoc, pos)) return false
+    if (isRemoved(assoc, pos)) return false
     val len = packedStringLength(assoc, pos)
     if (len != key.length) return false
 
@@ -521,6 +543,8 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
   }
 
 
+  /** Smallest character is not encoded as 0 but 1. This make possible to
+    * compare 2 inlined keys without comparing their lengths explicitly */
   protected val encodeTable: Array[Byte] = {
     val arr = new Array[Byte](128)
     var ch = 'a'.toInt
@@ -548,14 +572,16 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
   }
 
 
-  protected def grow() = {
+  protected def grow(compactOnly: Boolean = false) = {
     val oldAssoc = assoc
     val oldCapacity = capacity
-    this.assoc = new Array[Int](assoc.length * 2)
-    this.capacity = capacity * 2
+    val growthFactor = if (compactOnly) 1 else 2
+    this.assoc = new Array[Int](assoc.length * growthFactor)
+    this.capacity = capacity * growthFactor
     this.maxOccupied = capacity * loadFactor toInt
 
     var newOccupied = 0
+    var usedChars = 0
 
     var oldPos = 0
     while (oldPos < (oldCapacity * segmentLength)) {
@@ -566,6 +592,7 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
           inlinedHashCode(inlinedWord(oldAssoc, oldPos))
         } else {
           val len = packedStringLength(oldAssoc, oldPos)
+          usedChars += len
           charArrHashCode(chars, stringOffset(oldAssoc, oldPos), len)
         }
 
@@ -589,6 +616,8 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
       } else if (isRemoved(oldAssoc, oldPos)) {
         // currently removing of packed string causes memory leak
         // this abhorent negligence will be rectified in the near future
+        //
+        // right now it's necessary to call compact method
       }
 
       oldPos += segmentLength
@@ -596,6 +625,62 @@ abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor:
 
     this.occupied = newOccupied
     this.removed = 0
+
+    if (usedChars < 0.2 * charsTop) {
+      compactChars()
+    }
+  }
+
+
+  protected def compactChars(): Unit = {
+    val livelist = new Array[Long](size)
+    var livehead = 0
+
+    var pos = 0
+    while (pos < (capacity * segmentLength)) {
+     if (isAlive(assoc, pos) && !isInlined(assoc, pos)) {
+        val off = stringOffset(assoc, pos)
+        livelist(livehead) = (off.toLong << 32) | pos
+        livehead += 1
+      }
+      pos += segmentLength
+    }
+
+    Arrays.sort(livelist, 0, livehead)
+
+    var writepos = 0
+    var i = 0
+    while (i < livehead) {
+      val off = (livelist(i) >>> 32).toInt
+      val pos = (livelist(i) & 0xffffffffL).toInt
+      val len = packedStringLength(assoc, pos)
+
+      //val st = makeString(assoc, pos)
+
+      setStringOffset(assoc, pos, writepos)
+      var j = off
+      while (j < (off + len)) {
+        chars(writepos) = chars(j)
+        writepos += 1
+        j += 1
+      }
+
+      //val en = makeString(assoc, pos)
+      //if (st != en) sys.error("WOW")
+
+      i += 1
+    }
+    charsTop = writepos
+
+    {
+    var pos = 0
+    while (pos < (capacity * segmentLength)) {
+     if (isAlive(assoc, pos) && !isInlined(assoc, pos)) {
+       require(stringOffset(assoc, pos) < charsTop)
+     }
+     pos += segmentLength
+    }
+    }
   }
 
 
