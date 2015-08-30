@@ -38,6 +38,30 @@ object fastDotProduct extends breeze.generic.UFunc.UImpl2[breeze.linalg.operator
 
 object fastSparse {
 
+  /** Prepare integer array to be used by set functions in the fastSparse
+    * module - ie. values are distinct and increasing. This method might return
+    * the new array or modify the old array. */
+  def makeSet(arr: Array[Int]): Array[Int] = {
+    java.util.Arrays.sort(arr)
+    if (isDistinctIncreasingArray(arr)) arr
+    else arr.distinct
+
+  }
+
+  def isDistinctIncreasingArray(arr: Array[Int]): Boolean = {
+    if (arr.length == 0) return true
+
+    var last = arr(0)
+    var i = 1
+    while (i < arr.length) {
+      if (last >= arr(i)) return false
+      last = arr(i)
+      i += 1
+    }
+
+    true
+  }
+
   /** arguments must be sorted arrays */
   def intersectionSize(a: Array[Int], b: Array[Int]): Int = {
     var size, ai, bi = 0
