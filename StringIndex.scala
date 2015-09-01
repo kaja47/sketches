@@ -64,3 +64,57 @@ sealed class StringIndex(initialCapacity: Int = 1024) {
   /** Returns true if this index contains the string t. */
   def contains(str: CharSequence) = sid.contains(str)
 }
+
+
+
+final class ConcurrentStringIndex(initialCapacity: Int = 1024) extends StringIndex(initialCapacity) {
+
+  private val rwlock = new java.util.concurrent.locks.ReentrantReadWriteLock
+  private val rlock = rwlock.readLock
+  private val wlock = rwlock.writeLock
+
+  /** Returns an integer index for the given string, adding it to the
+    * index if it is not already present. */
+  override def index(str: CharSequence): Int = {
+    rlock.lock()
+    val idx = try { super.apply(str) }
+    finally { rlock.unlock() }
+    if (idx != -1) {
+      idx
+    } else {
+      wlock.lock()
+      try { super.index(str) }
+      finally { wlock.unlock() }
+    }
+  }
+
+  /** Returns the int id of the given element (0-based) or -1 if not
+    * found in the index. This method never changes the index. */
+  override def apply(str: CharSequence): Int = {
+    rlock.lock()
+    try { super.apply(str) }
+    finally { rlock.unlock() }
+  }
+
+  /** Returns a string at the given position or throws
+    * IndexOutOfBoundsException if it's not found. */
+  override def get(pos: Int): String = {
+    rlock.lock()
+    try { super.get(pos) }
+    finally { rlock.unlock() }
+  }
+
+  /** Number of elements in this index. */
+  override def size = {
+    rlock.lock()
+    try { super.size }
+    finally { rlock.unlock() }
+  }
+
+  /** Returns true if this index contains the string t. */
+  override def contains(str: CharSequence) = {
+    rlock.lock()
+    try { super.contains(str) }
+    finally { rlock.unlock() }
+  }
+}
