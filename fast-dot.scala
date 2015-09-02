@@ -245,3 +245,63 @@ object fastSparse {
   }
 
 }
+
+object Bits extends App {
+  /** Extract up to 64 bits from a long array. The array is split into number of
+    * blocks of length `blockLen`. Bits may span two neighbouring array
+    * elements. Requested bits that overrun block length are extracted from the
+    * begining of that block (hence *WrappingBlocks). */
+	def getBitsWrappingBlocks(arr: Array[Long], blockLen: Int, block: Int, bit: Int, bitLen: Int): Long = {
+
+    // position of long where current sequence starts
+    val blockstart = block * blockLen
+
+    // position of first bit to be extracted
+		val startbit = blockstart * 64 + bit
+		val mask = (1 << bitLen) - 1
+
+    val _endpos = (startbit+bitLen) / 64
+    // if position of second long is outside of current
+    val endpos = if (_endpos < blockstart + blockLen) _endpos else blockstart
+
+    ((arr(startbit / 64) >>> (startbit % 64)) & mask) |
+    ((arr(endpos) << (64 - startbit % 64)) & mask)
+	}
+
+
+  /** Extract up to 64 bits from a long array. Bits may span two neighbouring
+    * array elements. Requested bits that overrun length of the provied array
+    * are extracted from the begining (hence *Wrapping). */
+	def getBitsWrapping(arr: Array[Long], bit: Int, bitLen: Int): Long = {
+
+		val startbit = bit
+		val mask = (1 << bitLen) - 1
+
+    val _endpos = (startbit+bitLen) / 64
+    // if position of second long is outside of current
+    val endpos = if (_endpos < arr.length) _endpos else 0
+
+    ((arr(startbit / 64) >>> (startbit % 64)) & mask) |
+    ((arr(endpos) << (64 - startbit % 64)) & mask)
+	}
+
+
+  /** Extract up to 64 bits from a long array. Bits may span two neighbouring
+    * array elements. If requested bits overrun length of the array, exception
+    * is thrown. Which means `bit` arument must be at less than
+    * `arr.length * 64 - bitLen` */
+	def getBitsOverlapping(arr: Array[Long], bit: Int, bitLen: Int): Long = {
+		val startbit = bit
+		val mask = (1 << bitLen) - 1
+
+    ((arr(startbit / 64) >>> (startbit % 64)) & mask) |
+    ((arr((startbit+bitLen) / 64) << (64 - startbit % 64)) & mask)
+	}
+
+
+  /** Extract up to 64 bits from a long array. All requested bits must be
+    * contained inside one long, otherwise result is incorrect (no exception is
+    * thrown). */
+	def getBitsInsideLong(arr: Array[Long], bit: Int, bitLen: Int): Long =
+    ((arr(bit / 64) >>> (bit % 64)) & (1 << bitLen) - 1)
+}
