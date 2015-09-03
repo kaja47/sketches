@@ -238,3 +238,71 @@ final class IntFreqMap(initialSize: Int = 32, loadFactor: Double = 0.3, freqThre
 	}
 
 }
+
+
+class MinIntIntHeap(val capacity: Int) {
+
+  // both key and index are packed inside one Long value
+  // key which is used for comparison forms high 4 bytes of Long
+  val arr = new Array[Long](capacity)
+  var head = 0
+
+  def size = head
+  def isEmpty = head == 0
+  def nonEmpty = head != 0
+
+  def insert(key: Int, value: Int) = {
+    arr(head) = pack(key, value)
+    swim(head)
+    head += 1
+  }
+
+  def minKey: Int = high(arr(0))
+  def minValue: Int = low(arr(0))
+
+  def deleteMin(): Int = {
+    if (head == 0) throw new NoSuchElementException("underflow")
+    val minKey = high(arr(0))
+    head -= 1
+    swap(0, head)
+    arr(head) = 0
+    sink(0)
+    minKey
+  }
+
+
+  private def pack(hi: Int, lo: Int): Long = hi.toLong << 32 | lo
+  private def high(x: Long): Int = (x >>> 32).toInt
+  private def low(x: Long): Int = x.toInt
+
+  private def swap(a: Int, b: Int) = {
+    val tmp = arr(a)
+    arr(a) = arr(b)
+    arr(b) = tmp
+  }
+
+  private def parent(pos: Int) = (pos + 1) / 2 - 1
+  private def child(pos: Int) = pos * 2 + 1
+
+  // moves value at the given position up towards the root
+  private def swim(_pos: Int): Unit = {
+    var pos = _pos
+    while (pos > 0 && arr(parent(pos)) > arr(pos)) {
+      swap(parent(pos), pos)
+      pos = parent(pos)
+    }
+  }
+
+  // moves value at the given position down
+  private def sink(_pos: Int): Unit = {
+    var pos = _pos
+    while (child(pos) < head) {
+      var j = child(pos)
+      if (j < (head - 1) && arr(j) > arr(j+1)) j += 1
+      if (arr(pos) <= arr(j)) return
+      swap(pos, j)
+      pos = j
+    }
+  }
+
+}
