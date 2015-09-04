@@ -62,6 +62,7 @@ object fastSparse {
     true
   }
 
+
   /** arguments must be sorted arrays */
   def intersectionSize(a: Array[Int], b: Array[Int]): Int = {
     var size, ai, bi = 0
@@ -243,6 +244,78 @@ object fastSparse {
     val un = _sum(a, ws) + _sum(b, ws) - is
     is.toDouble / un
   }
+
+
+
+  private def _initUnion(sets: Array[Array[Int]]): (MinIntIntHeap, Array[Int]) = {
+    val heap = new MinIntIntHeap(sets.length)
+    val positions = new Array[Int](sets.length)
+
+    for (i <- 0 until sets.length) {
+      if (positions(i) < sets(i).length)  {
+        heap.insert(sets(i)(0), i)
+        positions(i) += 1
+      }
+    }
+
+    (heap, positions)
+  }
+
+
+  private def _stepUnion(sets: Array[Array[Int]], i: Int, heap: MinIntIntHeap, positions: Array[Int]) = {
+    if (positions(i) < sets(i).length) {
+      heap.insert(sets(i)(positions(i)), i)
+      positions(i) += 1
+    }
+  }
+
+
+  /** Computes size of union of array of sets via multiway merge */
+  def unionSize(sets: Array[Array[Int]]): Int = {
+    val (heap, positions) = _initUnion(sets)
+    var min = Long.MinValue
+    var size = 0
+
+    while (heap.nonEmpty) {
+      val key = heap.minKey
+      val i = heap.minValue
+
+      heap.deleteMin()
+
+      if (key.toLong != min) {
+        size += 1
+        min = key
+      }
+
+      _stepUnion(sets, i, heap, positions)
+    }
+
+    size
+  }
+
+
+  def union(sets: Array[Array[Int]]): Array[Int] = {
+    val (heap, positions) = _initUnion(sets)
+    var min = Long.MinValue
+    val buff = new collection.mutable.ArrayBuilder.ofInt
+
+    while (heap.nonEmpty) {
+      val key = heap.minKey
+      val i = heap.minValue
+
+      heap.deleteMin()
+
+      if (key.toLong != min) {
+        buff += key
+        min = key
+      }
+
+      _stepUnion(sets, i, heap, positions)
+    }
+
+    buff.result
+  }
+
 
 }
 
