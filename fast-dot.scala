@@ -49,12 +49,26 @@ object fastSparse {
   }
 
   def isDistinctIncreasingArray(arr: Array[Int]): Boolean = {
-    if (arr.length == 0) return true
+    if (arr.length <= 1) return true
 
     var last = arr(0)
     var i = 1
     while (i < arr.length) {
       if (last >= arr(i)) return false
+      last = arr(i)
+      i += 1
+    }
+
+    true
+  }
+
+  def isIncreasingArray(arr: Array[Int]): Boolean = {
+    if (arr.length <= 1) return true
+
+    var last = arr(0)
+    var i = 1
+    while (i < arr.length) {
+      if (last > arr(i)) return false
       last = arr(i)
       i += 1
     }
