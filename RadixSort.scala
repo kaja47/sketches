@@ -91,7 +91,11 @@ object RadixSort {
   }
 
   def sort(arr: Array[Int]): Unit = {
-    sort(arr, new Array[Int](arr.length), 0, 4, true)
+    if (arr.length <= 1024) {
+      java.util.Arrays.sort(arr)
+    } else {
+      sort(arr, new Array[Int](arr.length), 0, 4, true)
+    }
   }
 
   def sort(arr: Array[Int], scratch: Array[Int]): (Array[Int], Array[Int]) =
@@ -109,11 +113,6 @@ object RadixSort {
     * passed as argument to be sorted. In this case arrays cannot be swapped.
     */
   def sort(arr: Array[Int], scratch: Array[Int], fromByte: Int, toByte: Int, returnResultInSourceArray: Boolean): (Array[Int], Array[Int]) = {
-    
-//    if (arr.length < (1 << 10)) {
-//      java.util.Arrays.sort(arr)
-//      return (arr, scratch)
-//    }
 
     require(arr.length == scratch.length)
     require(fromByte < toByte)
