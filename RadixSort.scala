@@ -162,4 +162,73 @@ object RadixSort {
 
     handleResults(arr, input, output, returnResultInSourceArray)
   }
+
+
+
+
+  def sort(arr: Array[Long]): Unit = {
+    if (arr.length <= 1024) {
+      java.util.Arrays.sort(arr)
+    } else {
+      sort(arr, new Array[Long](arr.length), 0, 8, true)
+    }
+  }
+
+  def sort(arr: Array[Long], scratch: Array[Long]): (Array[Long], Array[Long]) =
+    sort(arr, scratch, 0, 8, false)
+
+  def sort(arr: Array[Long], scratch: Array[Long], returnResultInSourceArray: Boolean): (Array[Long], Array[Long]) =
+    sort(arr, scratch, 0, 8, returnResultInSourceArray)
+
+
+  def sort(arr: Array[Long], scratch: Array[Long], fromByte: Int, toByte: Int, returnResultInSourceArray: Boolean): (Array[Long], Array[Long]) = {
+
+    require(arr.length == scratch.length)
+    require(fromByte < toByte)
+    require(fromByte >= 0 && fromByte < 8)
+    require(toByte > 0 && toByte <= 8)
+
+    var input = arr
+    var output = scratch
+    val counters = new Array[Int](8 * 256)
+    val offsets  = new Array[Int](8 * 256)
+
+
+    // collect counts
+    var i = 0
+    while (i < arr.length) {
+      var byte = 0
+      while (byte < 8) {
+        val c = ((input(i) >>> (byte * 8)) & 0xff).toInt
+        counters(byte * 256 + c) += 1
+        byte += 1
+      }
+      i += 1
+    }
+
+    val canSkip = computeOffsets(counters, offsets, null, 8, arr.length)
+
+    var byte = 0
+    while (byte < 8) {
+      if ((canSkip & (1 << byte)) == 0) {
+
+        var i = 0
+        while (i < arr.length) {
+          val c = ((input(i) >>> (byte * 8)) & 0xff).toInt
+          output(offsets(byte * 256 + c)) = input(i)
+          offsets(byte * 256 + c) += 1
+          i += 1
+        }
+
+        // swap input with output
+        val tmp = input
+        input = output
+        output = tmp
+
+      }
+      byte += 1
+    }
+
+    handleResults(arr, input, output, returnResultInSourceArray)
+  }
 }
