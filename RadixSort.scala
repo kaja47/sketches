@@ -125,15 +125,17 @@ object RadixSort {
     val offsets  = new Array[Int](4 * 256)
 
     // collect counts
-    var i = 0
-    while (i < arr.length) {
+    // This loop iterates backward because this way it brings begining of the
+    // `arr` array into a cache and that speeds up next iteration.
+    var i = arr.length - 1
+    while (i >= 0) {
       var byte = 0
       while (byte < 4) {
         val c = (input(i) >>> (byte * 8)) & 0xff
         counters(byte * 256 + c) += 1
         byte += 1
       }
-      i += 1
+      i -= 1
     }
 
     val canSkip = computeOffsets(counters, offsets, null, 4, arr.length)
@@ -195,15 +197,17 @@ object RadixSort {
 
 
     // collect counts
-    var i = 0
-    while (i < arr.length) {
+    // This loop iterates backward because this way it brings begining of the
+    // `arr` array into a cache and that speeds up next iteration.
+    var i = arr.length - 1
+    while (i >= 0) {
       var byte = 0
       while (byte < 8) {
         val c = ((input(i) >>> (byte * 8)) & 0xff).toInt
         counters(byte * 256 + c) += 1
         byte += 1
       }
-      i += 1
+      i -= 1
     }
 
     val canSkip = computeOffsets(counters, offsets, null, 8, arr.length)
