@@ -331,6 +331,24 @@ object fastSparse {
   }
 
 
+  def mergeSortedArrays(a: Array[Int], b: Array[Int]): Array[Int] =
+    mergeSortedArrays(a, b, new Array[Int](a.length + b.length))
+
+  def mergeSortedArrays(a: Array[Int], b: Array[Int], res: Array[Int]): res.type = {
+    var ai, bi, ri = 0
+    var al = a.length
+    var bl = b.length
+    while (ai < al && bi < bl) {
+      if (a(ai) <= b(bi)) { res(ri) = a(ai) ; ai += 1 }
+      else                { res(ri) = b(bi) ; bi += 1 }
+      ri += 1
+    }
+    while (ai < al) { res(ri) = a(ai) ; ai += 1 ; ri += 1 }
+    while (bi < bl) { res(ri) = b(bi) ; bi += 1 ; ri += 1 }
+    res
+  }
+
+
 }
 
 object Bits extends App {
