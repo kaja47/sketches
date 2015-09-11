@@ -306,3 +306,19 @@ class MinIntIntHeap(val capacity: Int) {
   }
 
 }
+
+
+class Xorshift(var x: Int = System.currentTimeMillis.toInt, var y: Int = 4711, var z: Int = 5485612, var w: Int = 992121) {
+
+  def nextInt(mask: Int): Int =
+    math.abs(nextInt() & mask)
+
+  def nextInt(): Int = {
+    val t = x ^ (x << 11)
+    x = y
+    y = z
+    z = w
+    w = w ^ (w >>> 19) ^ t ^ (t >>> 8)
+    w
+  }
+}
