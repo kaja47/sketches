@@ -1,5 +1,7 @@
 package atrox
 
+import java.util.Arrays
+
 /** Based on arcane knowledge of http://www.codercorner.com/RadixSortRevisited.htm */
 object RadixSort {
 
@@ -92,17 +94,17 @@ object RadixSort {
 
   def sort(arr: Array[Int]): Unit = {
     if (arr.length <= 1024) {
-      java.util.Arrays.sort(arr)
+      Arrays.sort(arr)
     } else {
-      sort(arr, new Array[Int](arr.length), 0, 4, true)
+      sort(arr, new Array[Int](arr.length), 0, arr.length, 0, 4, true)
     }
   }
 
   def sort(arr: Array[Int], scratch: Array[Int]): (Array[Int], Array[Int]) =
-    sort(arr, scratch, 0, 4, false)
+    sort(arr, scratch, 0, arr.length, 0, 4, false)
 
   def sort(arr: Array[Int], scratch: Array[Int], returnResultInSourceArray: Boolean): (Array[Int], Array[Int]) =
-    sort(arr, scratch, 0, 4, returnResultInSourceArray)
+    sort(arr, scratch, 0, arr.length, 0, 4, returnResultInSourceArray)
 
 
   /** Sorts `arr` array using `scratch` as teporary scratchpad. Returns both
@@ -111,13 +113,18 @@ object RadixSort {
     *
     * If returnResultInSourceArray is set to true, the sorted array is the one
     * passed as argument to be sorted. In this case arrays cannot be swapped.
+    *
+    * from and fromByte are inclusive positions
+    * to and toByte are exclusive positions
     */
-  def sort(arr: Array[Int], scratch: Array[Int], fromByte: Int, toByte: Int, returnResultInSourceArray: Boolean): (Array[Int], Array[Int]) = {
+  def sort(arr: Array[Int], scratch: Array[Int], from: Int, to: Int, fromByte: Int, toByte: Int, returnResultInSourceArray: Boolean): (Array[Int], Array[Int]) = {
 
-    require(arr.length == scratch.length)
+    require(to <= scratch.length)
     require(fromByte < toByte)
     require(fromByte >= 0 && fromByte < 4)
     require(toByte > 0 && toByte <= 4)
+    require(from >= 0)
+    require(to <= arr.length)
 
     var input = arr
     var output = scratch
@@ -127,8 +134,8 @@ object RadixSort {
     // collect counts
     // This loop iterates backward because this way it brings begining of the
     // `arr` array into a cache and that speeds up next iteration.
-    var i = arr.length - 1
-    while (i >= 0) {
+    var i = to - 1
+    while (i >= from) {
       var byte = 0
       while (byte < 4) {
         val c = (input(i) >>> (byte * 8)) & 0xff
@@ -142,11 +149,10 @@ object RadixSort {
 
     var byte = fromByte
     while (byte < toByte) {
-
       if ((canSkip & (1 << byte)) == 0) {
 
-        var i = 0
-        while (i < arr.length) {
+        var i = from
+        while (i < to) {
           val c = (input(i) >>> (byte * 8)) & 0xff
           output(offsets(byte * 256 + c)) = input(i)
           offsets(byte * 256 + c) += 1
@@ -170,25 +176,27 @@ object RadixSort {
 
   def sort(arr: Array[Long]): Unit = {
     if (arr.length <= 1024) {
-      java.util.Arrays.sort(arr)
+      Arrays.sort(arr)
     } else {
-      sort(arr, new Array[Long](arr.length), 0, 8, true)
+      sort(arr, new Array[Long](arr.length), 0, arr.length, 0, 8, true)
     }
   }
 
   def sort(arr: Array[Long], scratch: Array[Long]): (Array[Long], Array[Long]) =
-    sort(arr, scratch, 0, 8, false)
+    sort(arr, scratch, 0, arr.length, 0, 8, false)
 
   def sort(arr: Array[Long], scratch: Array[Long], returnResultInSourceArray: Boolean): (Array[Long], Array[Long]) =
-    sort(arr, scratch, 0, 8, returnResultInSourceArray)
+    sort(arr, scratch, 0, arr.length, 0, 8, returnResultInSourceArray)
 
 
-  def sort(arr: Array[Long], scratch: Array[Long], fromByte: Int, toByte: Int, returnResultInSourceArray: Boolean): (Array[Long], Array[Long]) = {
+  def sort(arr: Array[Long], scratch: Array[Long], from: Int, to: Int, fromByte: Int, toByte: Int, returnResultInSourceArray: Boolean): (Array[Long], Array[Long]) = {
 
-    require(arr.length == scratch.length)
+    require(to <= scratch.length)
     require(fromByte < toByte)
     require(fromByte >= 0 && fromByte < 8)
     require(toByte > 0 && toByte <= 8)
+    require(from >= 0)
+    require(to <= arr.length)
 
     var input = arr
     var output = scratch
@@ -199,8 +207,8 @@ object RadixSort {
     // collect counts
     // This loop iterates backward because this way it brings begining of the
     // `arr` array into a cache and that speeds up next iteration.
-    var i = arr.length - 1
-    while (i >= 0) {
+    var i = to - 1
+    while (i >= from) {
       var byte = 0
       while (byte < 8) {
         val c = ((input(i) >>> (byte * 8)) & 0xff).toInt
@@ -216,8 +224,8 @@ object RadixSort {
     while (byte < 8) {
       if ((canSkip & (1 << byte)) == 0) {
 
-        var i = 0
-        while (i < arr.length) {
+        var i = from
+        while (i < to) {
           val c = ((input(i) >>> (byte * 8)) & 0xff).toInt
           output(offsets(byte * 256 + c)) = input(i)
           offsets(byte * 256 + c) += 1
