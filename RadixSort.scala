@@ -220,8 +220,8 @@ object RadixSort {
 
     val canSkip = computeOffsets(counters, offsets, null, 8, arr.length)
 
-    var byte = 0
-    while (byte < 8) {
+    var byte = fromByte
+    while (byte < toByte) {
       if ((canSkip & (1 << byte)) == 0) {
 
         var i = from
