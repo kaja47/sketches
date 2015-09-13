@@ -2,12 +2,19 @@ package atrox
 
 import java.util.Arrays
 
-/** Based on arcane knowledge of http://www.codercorner.com/RadixSortRevisited.htm */
+/** Radix sort is non-comparative sorting alorithm that have linear complexity
+  * for fixed width integers. In practice it's much faster than
+  * java.util.Arrays.sort for arrays larger than 1k. The only drawback is that the
+  * implementation used here is not in-place and needs auxilary array that is as
+  * big as the input to be sorted.
+  *
+  * Based on arcane knowledge of http://www.codercorner.com/RadixSortRevisited.htm
+  */
 object RadixSort {
 
   protected def computeOffsets(
-    counters: Array[Int], offsets: Array[Int], ends: Array[Int], bytes: Int, length: Int,
-    dealWithNegatives: Boolean = true, computeEnds: Boolean = false, detectPossibleSkips: Boolean = true
+    counts: Array[Int], offsets: Array[Int], bytes: Int, length: Int,
+    dealWithNegatives: Boolean = true, detectSkips: Boolean = true
   ): Int = {
 
     var canSkip = 0
@@ -15,25 +22,27 @@ object RadixSort {
     // compute offsets/prefix sums
     var byte = 0
     while (byte < bytes) {
-      offsets(byte * 256 + 0) = 0
+      val b256 = byte * 256
+
+      offsets(b256 + 0) = 0
 
       var i = 1
       while (i < 256) {
-        offsets(byte * 256 + i) = counters(byte * 256 + i-1) + offsets(byte * 256 + i-1)
+        offsets(b256 + i) = counts(b256 + i-1) + offsets(b256 + i-1)
         i += 1
       }
 
-      if (detectPossibleSkips) {
+      if (detectSkips) {
         // detect radices that can be skipped
-        i = 0
-        while (i < 256) {
-          if (counters(byte * 256 + i) < length && counters(byte * 256 + i) != 0) {
-            i += 257 // poor man's break
-          } else if (counters(byte * 256 + i) == length) {
-            canSkip |= (1 << byte)
-            i += 257 // poor man's break
-          }
+        var i = 0
+        var skip = false
+        while (i < 256 && (counts(b256 + i) == length || counts(b256 + i) == 0) && !skip) {
+          skip = (counts(b256 + i) == length)
           i += 1
+        }
+
+        if (skip) {
+          canSkip |= (1 << byte)
         }
       }
 
@@ -47,7 +56,7 @@ object RadixSort {
       var negativeValues = 0
       var i = 128
       while (i < 256) {
-        negativeValues += counters(lastByte * 256 + i)
+        negativeValues += counts(lastByte * 256 + i)
         i += 1
       }
 
@@ -59,25 +68,14 @@ object RadixSort {
         val ii = i + 128
         val curr = ii % 256
         val prev = (ii - 1 + 256) % 256
-        offsets(lastByte * 256 + curr) = counters(lastByte * 256 + prev) + offsets(lastByte * 256 + prev)
+        offsets(lastByte * 256 + curr) = counts(lastByte * 256 + prev) + offsets(lastByte * 256 + prev)
         i += 1
-      }
-    }
-
-    if (computeEnds) {
-      var byte = 0
-      while (byte < bytes) {
-        var i = 0 ; while (i < 256) {
-          ends(byte * 256 + i) = offsets(byte * 256 + (i + 1) % 256)
-          i += 1
-        }
-        ends(byte * 256 + 255) = length
-        byte += 1
       }
     }
 
     canSkip
   }
+
 
   protected def handleResults[T](arr: Array[T], input: Array[T], output: Array[T], returnResultInSourceArray: Boolean): (Array[T], Array[T]) = {
     if (returnResultInSourceArray && !(input eq arr)) {
@@ -128,7 +126,7 @@ object RadixSort {
 
     var input = arr
     var output = scratch
-    val counters = new Array[Int](4 * 256)
+    val counts = new Array[Int](4 * 256)
     val offsets  = new Array[Int](4 * 256)
 
     // collect counts
@@ -139,13 +137,13 @@ object RadixSort {
       var byte = 0
       while (byte < 4) {
         val c = (input(i) >>> (byte * 8)) & 0xff
-        counters(byte * 256 + c) += 1
+        counts(byte * 256 + c) += 1
         byte += 1
       }
       i -= 1
     }
 
-    val canSkip = computeOffsets(counters, offsets, null, 4, arr.length)
+    val canSkip = computeOffsets(counts, offsets, 4, arr.length)
 
     var byte = fromByte
     while (byte < toByte) {
@@ -200,7 +198,7 @@ object RadixSort {
 
     var input = arr
     var output = scratch
-    val counters = new Array[Int](8 * 256)
+    val counts = new Array[Int](8 * 256)
     val offsets  = new Array[Int](8 * 256)
 
 
@@ -212,13 +210,13 @@ object RadixSort {
       var byte = 0
       while (byte < 8) {
         val c = ((input(i) >>> (byte * 8)) & 0xff).toInt
-        counters(byte * 256 + c) += 1
+        counts(byte * 256 + c) += 1
         byte += 1
       }
       i -= 1
     }
 
-    val canSkip = computeOffsets(counters, offsets, null, 8, arr.length)
+    val canSkip = computeOffsets(counts, offsets, 8, arr.length)
 
     var byte = fromByte
     while (byte < toByte) {
