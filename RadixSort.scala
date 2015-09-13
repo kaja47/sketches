@@ -1,6 +1,8 @@
 package atrox
 
 import java.util.Arrays
+import java.lang.Float.floatToRawIntBits
+
 
 /** Radix sort is non-comparative sorting alorithm that have linear complexity
   * for fixed width integers. In practice it's much faster than
@@ -12,9 +14,10 @@ import java.util.Arrays
   */
 object RadixSort {
 
+
   protected def computeOffsets(
     counts: Array[Int], offsets: Array[Int], bytes: Int, length: Int,
-    dealWithNegatives: Boolean = true, detectSkips: Boolean = true
+    dealWithNegatives: Boolean = true, floats: Boolean = false, detectSkips: Boolean = true
   ): Int = {
 
     var canSkip = 0
@@ -50,26 +53,45 @@ object RadixSort {
     }
 
     val lastByte = bytes - 1
+    val lb256 = lastByte * 256
 
     // deal with negative values
     if (dealWithNegatives) {
       var negativeValues = 0
       var i = 128
       while (i < 256) {
-        negativeValues += counts(lastByte * 256 + i)
+        negativeValues += counts(lb256 + i)
         i += 1
       }
 
-      offsets(lastByte * 256 + 0) = negativeValues
-      offsets(lastByte * 256 + 128) = 0
+      if (!floats) {
 
-      i = 1
-      while (i < 256) {
-        val ii = i + 128
-        val curr = ii % 256
-        val prev = (ii - 1 + 256) % 256
-        offsets(lastByte * 256 + curr) = counts(lastByte * 256 + prev) + offsets(lastByte * 256 + prev)
-        i += 1
+        offsets(lb256 + 0) = negativeValues
+        offsets(lb256 + 128) = 0
+
+        var i = 1 ; while (i < 256) {
+          val ii = i + 128
+          val curr = ii % 256
+          val prev = (ii - 1 + 256) % 256
+          offsets(lb256 + curr) = counts(lb256 + prev) + offsets(lb256 + prev)
+          i += 1
+        }
+
+      } else {
+
+        offsets(lb256 + 0) = negativeValues
+        offsets(lb256 + 255) = counts(lb256 + 255) - 1
+
+        var i = 1 ; while (i < 128) {
+          offsets(lb256 + i) = offsets(lb256 + i - 1) + counts(lb256 + i - 1)
+          i += 1
+        }
+
+        i = 254 ; while (i > 127) {
+          offsets(lb256 + i) = offsets(lb256 + i + 1) + counts(lb256 + i)
+          i -= 1
+        }
+
       }
     }
 
@@ -90,6 +112,8 @@ object RadixSort {
     }
   }
 
+
+
   def sort(arr: Array[Int]): Unit = {
     if (arr.length <= 1024) {
       Arrays.sort(arr)
@@ -103,7 +127,6 @@ object RadixSort {
 
   def sort(arr: Array[Int], scratch: Array[Int], returnResultInSourceArray: Boolean): (Array[Int], Array[Int]) =
     sort(arr, scratch, 0, arr.length, 0, 4, returnResultInSourceArray)
-
 
   /** Sorts `arr` array using `scratch` as teporary scratchpad. Returns both
     * arrays, first sorted, second in undefined state. Both returned arrays are the
@@ -140,7 +163,7 @@ object RadixSort {
       last = input(i)
 
       var byte = 0
-      while (byte < 4) {
+      while (byte < 4) { // iterates through all 4 bytes on purpose, JVM unrolls this loop
         val c = (input(i) >>> (byte * 8)) & 0xff
         counts(byte * 256 + c) += 1
         byte += 1
@@ -178,7 +201,6 @@ object RadixSort {
 
 
 
-
   def sort(arr: Array[Long]): Unit = {
     if (arr.length <= 1024) {
       Arrays.sort(arr)
@@ -192,7 +214,6 @@ object RadixSort {
 
   def sort(arr: Array[Long], scratch: Array[Long], returnResultInSourceArray: Boolean): (Array[Long], Array[Long]) =
     sort(arr, scratch, 0, arr.length, 0, 8, returnResultInSourceArray)
-
 
   def sort(arr: Array[Long], scratch: Array[Long], from: Int, to: Int, fromByte: Int, toByte: Int, returnResultInSourceArray: Boolean): (Array[Long], Array[Long]) = {
 
@@ -249,6 +270,82 @@ object RadixSort {
         output = tmp
 
       }
+      byte += 1
+    }
+
+    handleResults(arr, input, output, returnResultInSourceArray)
+  }
+
+
+
+  def sort(arr: Array[Float]): Unit = {
+    if (arr.length <= 1024) {
+      Arrays.sort(arr)
+    } else {
+      sort(arr, new Array[Float](arr.length), 0, arr.length, 0, 8, true)
+    }
+  }
+
+  def sort(arr: Array[Float], scratch: Array[Float]): (Array[Float], Array[Float]) =
+    sort(arr, scratch, 0, arr.length, 0, 4, false)
+
+  def sort(arr: Array[Float], scratch: Array[Float], returnResultInSourceArray: Boolean): (Array[Float], Array[Float]) =
+    sort(arr, scratch, 0, arr.length, 0, 4, returnResultInSourceArray)
+
+  def sort(arr: Array[Float], scratch: Array[Float], from: Int, to: Int, fromByte: Int, toByte: Int, returnResultInSourceArray: Boolean): (Array[Float], Array[Float]) = {
+
+    require(to <= scratch.length)
+    require(fromByte < toByte)
+    require(fromByte >= 0 && fromByte < 4)
+    require(toByte > 0 && toByte <= 4)
+    require(from >= 0)
+    require(to <= arr.length)
+
+    var input = arr
+    var output = scratch
+    val counts = new Array[Int](4 * 256)
+    val offsets  = new Array[Int](4 * 256)
+    var sorted = true
+    var last = input(to - 1)
+
+    // collect counts
+    // This loop iterates backward because this way it brings begining of the
+    // `arr` array into a cache and that speeds up next iteration.
+    var i = to - 1
+    while (i >= from) {
+      sorted &= last >= input(i)
+      last = input(i)
+
+      var byte = 0
+      while (byte < 4) {
+        val c = (floatToRawIntBits(input(i)) >>> (byte * 8)) & 0xff
+        counts(byte * 256 + c) += 1
+        byte += 1
+      }
+      i -= 1
+    }
+
+    if (sorted) return (input, output)
+
+    val canSkip = computeOffsets(counts, offsets, 4, arr.length, floats = true)
+
+    var byte = fromByte
+    while (byte < toByte) {
+      if ((canSkip & (1 << byte)) == 0) {
+        var i = from
+        while (i < to) {
+          val c = (floatToRawIntBits(input(i)) >>> (byte * 8)) & 0xff
+          output(offsets(byte * 256 + c)) = input(i)
+          offsets(byte * 256 + c) += (if (byte < 3 || input(i) >= 0) 1 else -1)
+          i += 1
+        }
+
+        // swap input with output
+        val tmp = input
+        input = output
+        output = tmp
+      }
+
       byte += 1
     }
 
