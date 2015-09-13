@@ -128,12 +128,17 @@ object RadixSort {
     var output = scratch
     val counts = new Array[Int](4 * 256)
     val offsets  = new Array[Int](4 * 256)
+    var sorted = true
+    var last = input(to - 1)
 
     // collect counts
     // This loop iterates backward because this way it brings begining of the
     // `arr` array into a cache and that speeds up next iteration.
     var i = to - 1
     while (i >= from) {
+      sorted &= last >= input(i)
+      last = input(i)
+
       var byte = 0
       while (byte < 4) {
         val c = (input(i) >>> (byte * 8)) & 0xff
@@ -142,6 +147,8 @@ object RadixSort {
       }
       i -= 1
     }
+
+    if (sorted) return (input, output)
 
     val canSkip = computeOffsets(counts, offsets, 4, arr.length)
 
@@ -200,13 +207,17 @@ object RadixSort {
     var output = scratch
     val counts = new Array[Int](8 * 256)
     val offsets  = new Array[Int](8 * 256)
-
+    var sorted = true
+    var last = input(to - 1)
 
     // collect counts
     // This loop iterates backward because this way it brings begining of the
     // `arr` array into a cache and that speeds up next iteration.
     var i = to - 1
     while (i >= from) {
+      sorted &= last >= input(i)
+      last = input(i)
+
       var byte = 0
       while (byte < 8) {
         val c = ((input(i) >>> (byte * 8)) & 0xff).toInt
@@ -215,6 +226,8 @@ object RadixSort {
       }
       i -= 1
     }
+
+    if (sorted) return (input, output)
 
     val canSkip = computeOffsets(counts, offsets, 8, arr.length)
 
