@@ -179,11 +179,13 @@ object RadixSort {
     while (byte < toByte) {
       if ((canSkip & (1 << byte)) == 0) {
 
+        val byteOffsets = Arrays.copyOfRange(offsets, byte * 256, byte * 256 + 256)
+
         var i = from
         while (i < to) {
           val c = (input(i) >>> (byte * 8)) & 0xff
-          output(offsets(byte * 256 + c)) = input(i)
-          offsets(byte * 256 + c) += 1
+          output(byteOffsets(c)) = input(i)
+          byteOffsets(c) += 1
           i += 1
         }
 
@@ -256,11 +258,13 @@ object RadixSort {
     while (byte < toByte) {
       if ((canSkip & (1 << byte)) == 0) {
 
+        val byteOffsets = Arrays.copyOfRange(offsets, byte * 256, byte * 256 + 256)
+
         var i = from
         while (i < to) {
           val c = ((input(i) >>> (byte * 8)) & 0xff).toInt
-          output(offsets(byte * 256 + c)) = input(i)
-          offsets(byte * 256 + c) += 1
+          output(byteOffsets(c)) = input(i)
+          byteOffsets(c) += 1
           i += 1
         }
 
@@ -332,11 +336,14 @@ object RadixSort {
     var byte = fromByte
     while (byte < toByte) {
       if ((canSkip & (1 << byte)) == 0) {
+
+        val byteOffsets = Arrays.copyOfRange(offsets, byte * 256, byte * 256 + 256)
+
         var i = from
         while (i < to) {
           val c = (floatToRawIntBits(input(i)) >>> (byte * 8)) & 0xff
-          output(offsets(byte * 256 + c)) = input(i)
-          offsets(byte * 256 + c) += (if (byte < 3 || input(i) >= 0) 1 else -1)
+          output(byteOffsets(c)) = input(i)
+          byteOffsets(c) += (if (byte < 3 || input(i) >= 0) 1 else -1)
           i += 1
         }
 
