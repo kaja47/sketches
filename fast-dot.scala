@@ -409,4 +409,27 @@ object Bits extends App {
     * thrown). */
   def getBitsInsideLong(arr: Array[Long], bit: Int, bitLen: Int): Long =
     ((arr(bit / 64) >>> (bit % 64)) & (1 << bitLen) - 1)
+
+
+  def pack(hi: Int, lo: Int): Long = hi.toLong << 32 | lo
+  def pack(hi: Float, lo: Int): Long = pack(floatToRawIntBits(hi), lo)
+  def pack(hi: Int, lo: Float): Long = pack(hi, floatToRawIntBits(lo))
+  def pack(hi: Float, lo: Float): Long = pack(floatToRawIntBits(hi), floatToRawIntBits(lo))
+
+  /** These methods encode floats in such way that they can be sorted by radix sort. */
+  def packSortable(hi: Float, lo: Int): Long = pack(floatFlip(floatToRawIntBits(hi)), lo)
+  def packSortable(hi: Int, lo: Float): Long = pack(hi, floatFlip(floatToRawIntBits(lo)))
+  def packSortable(hi: Float, lo: Float): Long = pack(floatFlip(floatToRawIntBits(hi)), floatFlip(floatToRawIntBits(lo)))
+
+  def unpackIntHi(l: Long): Int = (l >>> 32).toInt
+  def unpackIntLo(l: Long): Int = l.toInt
+  def unpackFloatHi(l: Long): Float = intBitsToFloat(unpackIntHi(l))
+  def unpackFloatLo(l: Long): Float = intBitsToFloat(unpackIntLo(l))
+  def unpackSortableFloatHi(l: Long): Float = intBitsToFloat(floatUnflip(unpackIntHi(l)))
+  def unpackSortableFloatLo(l: Long): Float = intBitsToFloat(floatUnflip(unpackIntLo(l)))
+
+  /** based on http://stereopsis.com/radix.html */
+  protected def floatFlip(f: Int) = f ^ (-(f >>> 31) | 0x80000000)
+  protected def floatUnflip(f: Int) = f ^ (((f >>> 31) - 1) | 0x80000000)
+
 }
