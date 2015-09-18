@@ -2,6 +2,7 @@ package atrox
 
 import java.util.Arrays
 import java.lang.Float.floatToRawIntBits
+import java.lang.Double.doubleToRawLongBits
 
 
 /** Radix sort is non-comparative sorting alorithm that have linear complexity
@@ -344,6 +345,85 @@ object RadixSort {
           val c = (floatToRawIntBits(input(i)) >>> (byte * 8)) & 0xff
           output(byteOffsets(c)) = input(i)
           byteOffsets(c) += (if (byte < 3 || input(i) >= 0) 1 else -1)
+          i += 1
+        }
+
+        // swap input with output
+        val tmp = input
+        input = output
+        output = tmp
+      }
+
+      byte += 1
+    }
+
+    handleResults(arr, input, output, returnResultInSourceArray)
+  }
+
+
+
+  def sort(arr: Array[Double]): Unit = {
+    if (arr.length <= 1024) {
+      Arrays.sort(arr)
+    } else {
+      sort(arr, new Array[Double](arr.length), 0, arr.length, 0, 8, true)
+    }
+  }
+
+  def sort(arr: Array[Double], scratch: Array[Double]): (Array[Double], Array[Double]) =
+    sort(arr, scratch, 0, arr.length, 0, 8, false)
+
+  def sort(arr: Array[Double], scratch: Array[Double], returnResultInSourceArray: Boolean): (Array[Double], Array[Double]) =
+    sort(arr, scratch, 0, arr.length, 0, 8, returnResultInSourceArray)
+
+  def sort(arr: Array[Double], scratch: Array[Double], from: Int, to: Int, fromByte: Int, toByte: Int, returnResultInSourceArray: Boolean): (Array[Double], Array[Double]) = {
+
+    require(to <= scratch.length)
+    require(fromByte < toByte)
+    require(fromByte >= 0 && fromByte < 8)
+    require(toByte > 0 && toByte <= 8)
+    require(from >= 0)
+    require(to <= arr.length)
+
+    var input = arr
+    var output = scratch
+    val counts = new Array[Int](8 * 256)
+    val offsets  = new Array[Int](8 * 256)
+    var sorted = true
+    var last = input(to - 1)
+
+    // collect counts
+    // This loop iterates backward because this way it brings begining of the
+    // `arr` array into a cache and that speeds up next iteration.
+    var i = to - 1
+    while (i >= from) {
+      sorted &= last >= input(i)
+      last = input(i)
+
+      var byte = 0
+      while (byte < 8) {
+        val c = (doubleToRawLongBits(input(i)) >>> (byte * 8) & 0xff).toInt
+        counts(byte * 256 + c) += 1
+        byte += 1
+      }
+      i -= 1
+    }
+
+    if (sorted) return (input, output)
+
+    val canSkip = computeOffsets(counts, offsets, 8, arr.length, dealWithNegatives = true, floats = true, detectSkips = true)
+
+    var byte = fromByte
+    while (byte < toByte) {
+      if ((canSkip & (1 << byte)) == 0) {
+
+        val byteOffsets = Arrays.copyOfRange(offsets, byte * 256, byte * 256 + 256)
+
+        var i = from
+        while (i < to) {
+          val c = (doubleToRawLongBits(input(i)) >>> (byte * 8) & 0xff).toInt
+          output(byteOffsets(c)) = input(i)
+          byteOffsets(c) += (if (byte < 7 || input(i) >= 0) 1 else -1)
           i += 1
         }
 
