@@ -114,6 +114,16 @@ object RadixSort {
   }
 
 
+  protected def checkPreconditions[T](arr: Array[T], scratch: Array[T], from: Int, to: Int, fromByte: Int, toByte: Int, maxBytes: Int) = {
+    require(to <= scratch.length)
+    require(fromByte < toByte)
+    require(fromByte >= 0 && fromByte < maxBytes)
+    require(toByte > 0 && toByte <= maxBytes)
+    require(from >= 0)
+    require(to <= arr.length)
+  }
+
+
 
   def sort(arr: Array[Int]): Unit = {
     if (arr.length <= 1024) {
@@ -141,12 +151,7 @@ object RadixSort {
     */
   def sort(arr: Array[Int], scratch: Array[Int], from: Int, to: Int, fromByte: Int, toByte: Int, returnResultInSourceArray: Boolean): (Array[Int], Array[Int]) = {
 
-    require(to <= scratch.length)
-    require(fromByte < toByte)
-    require(fromByte >= 0 && fromByte < 4)
-    require(toByte > 0 && toByte <= 4)
-    require(from >= 0)
-    require(to <= arr.length)
+    checkPreconditions(arr, scratch, from, to, fromByte, toByte, 4)
 
     var input = arr
     var output = scratch
@@ -220,12 +225,7 @@ object RadixSort {
 
   def sort(arr: Array[Long], scratch: Array[Long], from: Int, to: Int, fromByte: Int, toByte: Int, returnResultInSourceArray: Boolean): (Array[Long], Array[Long]) = {
 
-    require(to <= scratch.length)
-    require(fromByte < toByte)
-    require(fromByte >= 0 && fromByte < 8)
-    require(toByte > 0 && toByte <= 8)
-    require(from >= 0)
-    require(to <= arr.length)
+    checkPreconditions(arr, scratch, from, to, fromByte, toByte, 8)
 
     var input = arr
     var output = scratch
@@ -299,12 +299,7 @@ object RadixSort {
 
   def sort(arr: Array[Float], scratch: Array[Float], from: Int, to: Int, fromByte: Int, toByte: Int, returnResultInSourceArray: Boolean): (Array[Float], Array[Float]) = {
 
-    require(to <= scratch.length)
-    require(fromByte < toByte)
-    require(fromByte >= 0 && fromByte < 4)
-    require(toByte > 0 && toByte <= 4)
-    require(from >= 0)
-    require(to <= arr.length)
+    checkPreconditions(arr, scratch, from, to, fromByte, toByte, 4)
 
     var input = arr
     var output = scratch
@@ -378,12 +373,7 @@ object RadixSort {
 
   def sort(arr: Array[Double], scratch: Array[Double], from: Int, to: Int, fromByte: Int, toByte: Int, returnResultInSourceArray: Boolean): (Array[Double], Array[Double]) = {
 
-    require(to <= scratch.length)
-    require(fromByte < toByte)
-    require(fromByte >= 0 && fromByte < 8)
-    require(toByte > 0 && toByte <= 8)
-    require(from >= 0)
-    require(to <= arr.length)
+    checkPreconditions(arr, scratch, from, to, fromByte, toByte, 8)
 
     var input = arr
     var output = scratch
