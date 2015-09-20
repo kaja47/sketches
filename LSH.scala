@@ -1,10 +1,53 @@
 package atrox.sketch
 
-import breeze.linalg.{ SparseVector, DenseVector, BitVector }
+import atrox.{ fastSparse, IntFreqMap, Bits }
 import java.lang.System.arraycopy
 import java.lang.Long.{ bitCount, rotateLeft }
+import java.util.Arrays
 import scala.util.hashing.MurmurHash3
-import scala.collection.mutable
+import scala.collection.{ mutable, GenSeq }
+
+
+
+case class LSHBuildCfg(
+  /** every bucket that has more than this number of elements is discarded */
+  maxBucketSize: Int = Int.MaxValue,
+
+  /** Determine how many bands are computed during one pass over data.
+    * Multiple band groups can be execute in parellel.
+    *
+    * Increasing this number may lower available parallelisms. On the other
+    * hand it increases locality or reference which may lead to better
+    * performance but need to instantiate all sketchers and those might be
+    * rather big (in case of RandomHyperplanes and RandomProjections)
+    *
+    * 1         - bands are computed one after other in multiple passes,
+    *             if computeBandsInParallel is set, all of them are compute in parallel.
+    * lsh.bands - all bands are computed in one pass over data
+    *             This setting needs to instantiate all sketchers at once, but
+    *             it's necessary when data source behave like an iterator.
+    */
+  bandsInOnePass: Int = 1,
+
+  /** If this is set to true, program does one prior pass to count number of
+    * values associated with every hash. It needs to do more work but alocates
+    * only necessary amount of memory. */
+  collectCounts: Boolean = false,
+
+  computeBandsInParallel: Boolean = false
+)
+
+case class LSHCfg(
+  maxBucketSize: Int = Int.MaxValue,
+
+  /** How many candidates to select. */
+  maxCandidates: Int = Int.MaxValue,
+
+  /** How many final result to return. */
+  maxResults: Int = Int.MaxValue
+) {
+  def accept(idxs: Array[Int]) = idxs != null && idxs.length <= maxBucketSize
+}
 
 
 case class Sim(a: Int, b: Int, estimatedSimilatity: Double, similarity: Double)
@@ -12,376 +55,500 @@ case class Sim(a: Int, b: Int, estimatedSimilatity: Double, similarity: Double)
 
 object LSH {
 
-	def apply(sk: BitSketch, bands: Int, onlyIdxs: Boolean): BitLSH =
-		apply(sk, bands, onlyIdxs, -1)
 
-	def apply(sk: BitSketch, bands: Int, onlyIdxs: Boolean, _bandBits: Int): BitLSH = {
-		require(sk.bitsPerSketch % 64 == 0)
-		require(sk.bitsPerSketch % bands == 0)
+  // === BitLSH =================
 
-		val bandBits = if (_bandBits <= 0) sk.bitsPerSketch / bands else _bandBits
-		val bandStep = sk.bitsPerSketch / bands
+  def apply(sk: BitSketching, bands: Int): BitLSH =
+    apply(sk, bands, false, LSHBuildCfg())
 
-		require(bandBits < 64)
-		val bandMask = (1L << bandBits) - 1
-		val bandSize = (1 << bandBits)
+  def apply(sk: BitSketching, bands: Int, includeSketches: Boolean, cfg: LSHBuildCfg): BitLSH = {
+    require(sk.sketchLength % 64 == 0 && bands > 0)
 
-		val longsLen = sk.bitsPerSketch / 64
+    val bandBits = sk.sketchLength / bands
+    val bandMask = (1L << bandBits) - 1
+    val bandSize = (1 << bandBits)
+    val longsLen = sk.sketchLength / 64
 
-		val sizes = new Array[Int](bands * bandSize)
-		for (i <- 0 until sk.sketchArray.length / longsLen) {
-			for (b <- 0 until bands) {
-				val h = ripBits(sk.sketchArray, sk.bitsPerSketch, i, b, bandStep, bandMask)
-				val bucket = b * bandSize + h
-				sizes(bucket) += 1
-			}
-		}
+    require(bandBits < 32)
 
-		println(sizes.size)
+    if (includeSketches) ??? // TODO
 
-		val idxs     = Array.tabulate(bands * bandSize) { i => if (sizes(i) == 0) null else new Array[Int](sizes(i)) }
-		val sketches = Array.tabulate(bands * bandSize) { i => if (onlyIdxs)      null else new Array[Long](sizes(i)) }
+    val idxs     = new Array[Array[Int]](bands * bandSize)
+    val sketches = null//new Array[Array[Long]](bands * bandSize)
 
-		val is = new Array[Int](bands * bandSize)
+    for ((bs, bandGroup) <- bandGrouping(bands, cfg)) {
 
-		for (i <- 0 until sk.sketchArray.length / longsLen) {
-			for (b <- 0 until bands) {
-				val h = ripBits(sk.sketchArray, sk.bitsPerSketch, i, b, bandStep, bandMask)
-				val bucket = b * bandSize + h
-				idxs    (bucket)(is(bucket)) = i
-				if (!onlyIdxs) {
-					arraycopy(sk.sketchArray, i * longsLen, sketches(bucket), is(bucket) * longsLen, longsLen)
-				}
-				is(bucket) += 1
-			}
-		}
+      val skslices = bs map { b => sk.slice(b * bandBits, (b+1) * bandBits) } toArray
 
-		new BitLSH(sk, idxs, sketches, sk.bitsPerSketch, bands, bandBits, bandStep, onlyIdxs)
-	}
+      def runItems(f: (Int, Int) => Unit) = {
+        val base = bs(0)
+        val end = bs.last
+        var i = 0 ; while (i < sk.length) {
+          var b = base ; while (b <= end) {
+            val h = skslices(b).getSketchFragmentAsLong(i, 0, bandBits).toInt
+            assert(h <= bandSize)
+            f((b - base) * bandSize + h, i)
+            b += 1
+          }
+          i += 1
+        }
+      }
 
+      val bandMap = if (cfg.collectCounts) {
+        val counts = new Array[Int](cfg.bandsInOnePass * bandSize)
+        runItems((h, i) => counts(h) += 1)
+        Grouping(cfg.bandsInOnePass * bandSize, Int.MaxValue, counts) // Grouping.Counted
+      } else {
+        Grouping(cfg.bandsInOnePass * bandSize, cfg.bandsInOnePass * sk.length) // Grouping.Sorted
+      }
 
-	def ripBits(sketchArray: Array[Long], bitsPerSketch: Int, i: Int, band: Int, bandStep: Int, bandMask: Long): Int = {
-		// (rotateLeft(sketchArray(i), b*bandStep) & bandMask).toInt
+      runItems((h, i) => bandMap.add(h, i))
 
-		val startbit = i * bitsPerSketch + band * bandStep
-		//val mask = ((1 << bandStep) - 1)
-		val mask = bandMask
+      bandMap.getAll foreach { case (h, is) =>
+        require(fastSparse.isDistinctIncreasingArray(is))
+        idxs(bandGroup * bandSize * cfg.bandsInOnePass + h) = is
+      }
+    }
 
-		if ((startbit+bandStep) / 64 < sketchArray.length) {
-			((sketchArray(startbit / 64) >>> (startbit % 64)) & mask) |
-			((sketchArray((startbit+bandStep) / 64) << (64 - startbit % 64)) & mask) toInt
-		} else {
-			((sketchArray(startbit / 64) >>> (startbit % 64)) & mask) toInt
-		}
-	}
+    val _sk = sk match { case sk: BitSketch => sk ; case _ => null }
+    new BitLSH(_sk, sk.estimator, LSHCfg(), idxs, sketches, sk.sketchLength, bands, bandBits, includeSketches)
+  }
 
 
-	def apply(sk: IntSketch, bands: Int, hashBits: Int = 16, onlyIdxs: Boolean = false): IntLSH = {
-		require(sk.sketchLength % bands == 0)
-		require(sk.sketchArray.length % sk.sketchLength == 0)
-
-		val hashMask = (1 << hashBits) - 1
-		val bandSize = (1 << hashBits) // how many possible hashes is in one band
-		val bandLength = sk.sketchLength / bands // how many elements from sketch is used in one band
-
-		// array backed LSH
-
-		val sizes = new Array[Int](bands * bandSize)
-		for (i <- 0 until sk.sketchArray.length / sk.sketchLength) {
-			for (b <- 0 until bands) {
-				val h = hashSlice(sk.sketchArray, sk.sketchLength, i, b, bandLength, hashMask)
-				val bucket = b * bandSize + h
-				sizes(bucket) += 1
-			}
-		}
-
-		val idxs     = Array.tabulate(bands * bandSize) { i => if (sizes(i) == 0) null else new Array[Int](sizes(i)) }
-		val sketches = Array.tabulate(bands * bandSize) { i => if (onlyIdxs)      null else new Array[Int](sizes(i)) }
-
-		val is = new Array[Int](bands * bandSize)
-
-		for (i <- 0 until sk.sketchArray.length / sk.sketchLength) {
-			for (b <- 0 until bands) {
-				val h = hashSlice(sk.sketchArray, sk.sketchLength, i, b, bandLength, hashMask)
-				val bucket = b * bandSize + h
-				idxs(bucket)(is(bucket)) = i
-				if (!onlyIdxs) {
-//					arraycopy(sk.sketchArray, i * longsLen, sketches(bucket), is(bucket) * longsLen, longsLen)
-						???
-				}
-				is(bucket) += 1
-			}
-		}
-
-		new IntLSH(sk, idxs, sketches, sk.sketchLength, bands, sk.sketchLength / bands, hashMask)
-
-		/*
-		// hashmap backed LSH
-
-		val buffers = Array.fill(bands)(mutable.Map[Int, (mutable.ArrayBuilder.ofInt, mutable.ArrayBuilder.ofInt)]())
-		def mkBuilderPair = (new mutable.ArrayBuilder.ofInt, if (onlyIdxs) null else new mutable.ArrayBuilder.ofInt)
-
-		for (i <- 0 until sk.sketchArray.length / sk.sketchLength) {
-			for (b <- 0 until bands) {
-				val h = hashSlice(sk.sketchArray, sk.sketchLength, i, b, bandLength, hashMask)
-
-				val (idxs, sketches) = buffers(b).getOrElseUpdate(h, mkBuilderPair)
-				idxs += i
-				if (!onlyIdxs) {
-					sketches ++= sk.sketchArray.slice(i * sk.sketchLength, i * sk.sketchLength + sk.sketchLength)
-				}
-			}
-		}
-
-		val data = buffers.map(_.map {
-			case (h, (idxs, sketches)) =>
-				(h, (idxs.result, if (sketches == null) null else sketches.result))
-		}.toMap)
-
-		new IntLSH(sk, data, sk.sketchLength, bands, sk.sketchLength / bands, hashMask)
-		*/
-	}
-
-	def hashSlice(sketchArray: Array[Int], sketchLength: Int, i: Int, band: Int, bandLength: Int, hashMask: Int) = {
-		val start = i * sketchLength + band * bandLength
-		val end   = start + bandLength
-		//val slice = sketchArray.slice(start, end)
-		_hashSlice(sketchArray, start, end) & hashMask
-	}
+  def ripBits(sketchArray: Array[Long], bitsPerSketch: Int, i: Int, band: Int, bandBits: Int): Int =
+    Bits.getBitsOverlapping(sketchArray, bitsPerSketch * i + band * bandBits, bandBits).toInt
 
 
-	import scala.util.hashing.MurmurHash3
+  // === IntLSH =================
 
-	// based on scala.util.hashing.MurmurHash3.arrayHash
-	private def _hashSlice(arr: Array[Int], start: Int, end: Int): Int = {
-		var h = MurmurHash3.arraySeed
-		var i = start
-		while (i < end) {
-			h = MurmurHash3.mix(h, arr(i))
-			i += 1
-		}
-		MurmurHash3.finalizeHash(h, end-start)
-	}
+  def apply(sk: IntSketching, bands: Int): IntLSH =
+    apply(sk, bands, 32 - Integer.numberOfLeadingZeros(sk.length), false, LSHBuildCfg())
+
+  def apply(sk: IntSketching, bands: Int, hashBits: Int): IntLSH =
+    apply(sk, bands, hashBits, false, LSHBuildCfg())
+
+  def apply(sk: IntSketching, bands: Int, hashBits: Int, includeSketches: Boolean): IntLSH =
+    apply(sk, bands, hashBits, includeSketches, LSHBuildCfg())
+
+  def apply(sk: IntSketching, bands: Int, hashBits: Int, includeSketches: Boolean, cfg: LSHBuildCfg): IntLSH = {
+    require(bands > 0 && hashBits > 0)
+
+    val bandElements = sk.sketchLength / bands // how many elements from sketch is used in one band
+    val hashMask = (1 << hashBits) - 1
+    val bandSize = (1 << hashBits) // how many hashes are possible in one band
+
+    if (includeSketches) ??? // TODO
+
+
+    val idxs     = new Array[Array[Int]](bands * bandSize)
+    val sketches = null//new Array[Array[Long]](bands * bandSize)
+
+    for ((bs, bandGroup) <- bandGrouping(bands, cfg)) {
+
+      val scratchpads = Array.ofDim[Int](cfg.bandsInOnePass, bandElements)
+      val skslices    = bs map { b => sk.slice(b * bandElements, (b+1) * bandElements) } toArray
+
+      def runItems(f: (Int, Int) => Unit) = {
+        val base = bs(0)
+        val end = bs.last
+        var i = 0 ; while (i < sk.length) {
+          var b = base ; while (b <= end) {
+            val h = if (sk.isInstanceOf[IntSketch]) {
+              // if sk is IntSketch instance directly access it's internal sketch array, this saves some copying
+              val _sk = sk.asInstanceOf[IntSketch]
+              hashSlice(_sk.sketchArray, _sk.sketchLength, i, b, bandElements, hashBits)
+            } else {
+              skslices(b).writeSketchFragment(i, scratchpads(b), 0)
+              hashSlice(scratchpads(b), bandElements, 0, 0, bandElements, hashBits)
+            }
+            f((b - base) * bandSize + h, i)
+            b += 1
+          }
+          i += 1
+        }
+      }
+
+      val bandMap = if (cfg.collectCounts) {
+        val counts = new Array[Int](cfg.bandsInOnePass * bandSize)
+        runItems((h, i) => counts(h) += 1)
+        Grouping(cfg.bandsInOnePass * bandSize, Int.MaxValue, counts) // Grouping.Counted
+      } else {
+        Grouping(cfg.bandsInOnePass * bandSize, cfg.bandsInOnePass * sk.length) // Grouping.Sorted
+      }
+
+      runItems((h, i) => bandMap.add(h, i))
+
+      bandMap.getAll foreach { case (h, is) =>
+        require(fastSparse.isDistinctIncreasingArray(is))
+        idxs(bandGroup * bandSize * cfg.bandsInOnePass + h) = is
+      }
+    }
+
+    val _sk = sk match { case sk: IntSketch => sk ; case _ => null }
+    new IntLSH(_sk, sk.estimator, LSHCfg(), idxs, sketches, sk.sketchLength, bands, bandElements, hashBits, includeSketches)
+  }
+
+  def hashSlice(sketchArray: Array[Int], sketchLength: Int, i: Int, band: Int, bandLength: Int, hashBits: Int) = {
+    val start = i * sketchLength + band * bandLength
+    val end   = start + bandLength
+    _hashSlice(sketchArray, start, end) & ((1 << hashBits) - 1)
+  }
+
+
+  /** based on scala.util.hashing.MurmurHash3.arrayHash */
+  private def _hashSlice(arr: Array[Int], start: Int, end: Int): Int = {
+    var h = MurmurHash3.arraySeed
+    var i = start
+    while (i < end) {
+      h = MurmurHash3.mix(h, arr(i))
+      i += 1
+    }
+    MurmurHash3.finalizeHash(h, end-start)
+  }
+
+  // band groups -> (band indexes, band group index)
+  def bandGrouping(bands: Int, cfg: LSHBuildCfg): GenSeq[(Seq[Int], Int)] = {
+    val bss = (0 until bands grouped cfg.bandsInOnePass).zipWithIndex.toSeq ;
+    if (!cfg.computeBandsInParallel) bss else bss.par
+  }
 
 }
 
 
 
-abstract class LSH {
-	def allSimilarities(estimateThreshold: Double): Iterator[Sim]
-	def allSimilarities(estimateThreshold: Double, threshold: Double, similarityFunction: (Int, Int) => Double): Iterator[Sim]
+/** LSH configuration
+  *
+  * LSH, full Sketch
+  * LSH, empty Sketch, embedded sketches
+  *  - embedded sketches greatly increase memory usage but can make search
+  *    faster because they provide better locality
+  * LSH, empty Sketch, no embedded sketches
+  *  - can only provide list of candidates, cannot estimate similarities
+  *
+  * methods with raw prefix might return duplicates
+  * methods withount raw prefix must never return duplicates
+  *
+  * idxs must be sorted
+  */
+abstract class LSH { self =>
+  type SketchArray
+  type Sketching <: atrox.sketch.Sketching[T] forSome { type T <: SketchArray}
+  type Sketch <: atrox.sketch.Sketch[T] forSome { type T <: SketchArray}
+  type Idxs = Array[Int]
+  type SimFun = (Int, Int) => Double
 
-	//def bucketSizes: (Double, Int, Int)
+  def sketch: Sketch
+  def estimator: Estimator[SketchArray]
+  def cfg: LSHCfg
+  def bands: Int
+  def includeSketches: Boolean
+
+  protected def getSketchArray: SketchArray = if (sketch != null) sketch.sketchArray else null.asInstanceOf[SketchArray]
+
+  def withConfig(cfg: LSHCfg)
+
+  def rawStream: Iterator[(Idxs, SketchArray)]
+  def rawStreamIndexes: Iterator[Idxs]
+
+  def rawCandidates(sketch: SketchArray, idx: Int): Array[(Idxs, SketchArray)]
+  def rawCandidates(sketch: Sketching, idx: Int): Array[(Idxs, SketchArray)] = rawCandidates(sketch.getSketchFragment(idx), 0)
+  def rawCandidates(idx: Int): Array[(Idxs, SketchArray)] = rawCandidates(sketch.sketchArray, idx)
+
+  def rawCandidateIndexes(sketch: SketchArray, idx: Int): Array[Idxs]
+  def rawCandidateIndexes(sketch: Sketching, idx: Int): Array[Idxs] = rawCandidateIndexes(sketch.getSketchFragment(idx), 0)
+  def rawCandidateIndexes(idx: Int): Array[Idxs] = rawCandidateIndexes(sketch.sketchArray, idx)
+
+  def candidateIndexes(sketch: SketchArray, idx: Int): Idxs = fastSparse.union(rawCandidateIndexes(sketch, idx))
+  def candidateIndexes(sketch: Sketching, idx: Int): Idxs = candidateIndexes(sketch.getSketchFragment(idx), 0)
+  def candidateIndexes(idx: Int): Idxs = candidateIndexes(sketch.sketchArray, idx)
+
+  // those methods need valid sketch object or inline sketches
+  // If minEst is set to Double.NegativeInfinity, no estimates are computed.
+  // Instead candidates are directly filtered through similarity function.
+  def rawSimilarIndexes(sketch: SketchArray, idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs = {
+    val minBits = estimator.minSameBits(minEst)
+    val res = new collection.mutable.ArrayBuilder.ofInt
+
+    if (includeSketches) {
+
+      for ((idxs, skArr) <- rawCandidates(sketch, idx)) {
+        var i = 0
+        while (i < idxs.length) {
+          val bits = estimator.sameBits(skArr, i, sketch, idx)
+          if (bits >= minBits) {
+            if (f == null || f(idxs(i), idx) >= minSim) {
+              res += idxs(i)
+            }
+          }
+          i += 1
+        }
+      }
+
+    } else {
+
+      for ((idxs, _) <- rawCandidates(sketch, idx)) {
+        var i = 0
+        while (i < idxs.length) {
+          val bits = estimator.sameBits(sketch, idxs(i), sketch, idx)
+          if (bits >= minBits) {
+            if (f == null || f(idxs(i), idx) >= minSim) {
+              res += idxs(i)
+            }
+          }
+          i += 1
+        }
+      }
+
+    }
+
+    res.result
+  }
+  def rawSimilarIndexes(sketch: SketchArray, idx: Int, minEst: Double): Idxs =
+    rawSimilarIndexes(sketch, idx, minEst, 0.0, null)
+  def rawSimilarIndexes(sketch: Sketching, idx: Int, minEst: Double): Idxs =
+    rawSimilarIndexes(sketch.getSketchFragment(idx), 0, minEst, 0.0, null)
+  def rawSimilarIndexes(sketch: Sketching, idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs =
+    rawSimilarIndexes(sketch.getSketchFragment(idx), 0, minEst, minSim, f)
+  def rawSimilarIndexes(idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs =
+    rawSimilarIndexes(getSketchArray, idx, minEst, minSim, f)
+  def rawSimilarIndexes(idx: Int, minEst: Double): Idxs =
+    rawSimilarIndexes(getSketchArray, idx, minEst, 0.0, null)
+
+  // those methods need valid sketch object or inline sketches
+  //def similarIndexes(sketch: SketchArray, idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs
+  def similarIndexes(sketch: SketchArray, idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs = {
+    if (includeSketches && getSketchArray == null) {
+      rawSimilarIndexes(sketch, idx, minEst, minSim, f).distinct // TODO filtering
+    } else {
+
+      val minBits = estimator.minSameBits(minEst)
+      val candidates = selectCandidates(idx)
+      val res = new collection.mutable.ArrayBuilder.ofInt
+
+      var i = 0 ; while (i < candidates.length) {
+        val bits = estimator.sameBits(sketch, candidates(i), sketch, idx)
+        if (bits >= minBits) {
+          if (f == null || f(candidates(i), idx) >= minSim) {
+            if (idx != candidates(i)) {
+              res += candidates(i)
+            }
+          }
+        }
+        i += 1
+      }
+
+      res.result
+    }
+  }
+  def similarIndexes(sketch: SketchArray, idx: Int, minEst: Double): Idxs =
+    similarIndexes(sketch, idx, minEst, 0.0, null)
+  def similarIndexes(sketch: Sketching, idx: Int, minEst: Double): Idxs =
+    similarIndexes(sketch.getSketchFragment(idx), 0, minEst, 0.0, null)
+  def similarIndexes(sketch: Sketching, idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs =
+    similarIndexes(sketch.getSketchFragment(idx), 0, minEst, minSim, f)
+  def similarIndexes(idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs =
+    similarIndexes(getSketchArray, idx, minEst, minSim, f)
+  def similarIndexes(idx: Int, minEst: Double): Idxs =
+    similarIndexes(getSketchArray, idx, minEst, 0.0, null)
+
+  // those methods need valid sketch object or inline sketches
+  //def similarItems(sketch: SketchArray, idx: Int, minEst: Double, minSim: Double, f: SimFun): Iterator[Sim]
+  def similarItems(sketch: SketchArray, idx: Int, minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] = {
+    if (includeSketches) {
+      rawSimilarIndexes(sketch, idx, minEst, minSim, f).distinct.iterator // TODO filtering
+      ???
+    } else {
+      val minBits = estimator.minSameBits(minEst)
+      val candidates = selectCandidates(idx)
+      val res = new collection.mutable.ArrayBuffer[Sim]
+
+      var i = 0 ; while (i < candidates.length) {
+        val bits = estimator.sameBits(sketch, candidates(i), sketch, idx)
+        if (bits >= minBits) {
+          var sim: Double = 0.0
+          if (f == null || { sim = f(candidates(i), idx) ; sim >= minSim }) {
+            res += Sim(candidates(i), idx, estimator.estimateSimilarity(bits), sim)
+          }
+        }
+        i += 1
+      }
+
+      res.iterator
+    }
+  }
+  def similarItems(sketch: SketchArray, idx: Int, minEst: Double): Iterator[Sim] =
+    similarItems(sketch, idx, minEst, 0.0, null)
+  def similarItems(sketch: Sketching, idx: Int, minEst: Double): Iterator[Sim] =
+    similarItems(sketch.getSketchFragment(idx), 0, minEst, 0.0, null)
+  def similarItems(sketch: Sketching, idx: Int, minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] =
+    similarItems(sketch.getSketchFragment(idx), 0, minEst, minSim, f)
+  def similarItems(idx: Int, minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] =
+    similarItems(getSketchArray, idx, minEst, minSim, f)
+  def similarItems(idx: Int, minEst: Double): Iterator[Sim] =
+    similarItems(getSketchArray, idx, minEst, 0.0, null)
+
+  def allSimilarIndexes(minEst: Double, minSim: Double, f: SimFun): Iterator[Idxs] =
+    Iterator.tabulate(sketch.length) { idx => similarIndexes(idx, minEst, minSim, f) }
+  def allSimilarIndexes(minEst: Double): Iterator[Idxs] =
+    Iterator.tabulate(sketch.length) { idx => similarIndexes(idx, minEst, 0.0, null) }
+
+  def allSimilarItems(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, Iterator[Sim])] =
+    Iterator.tabulate(sketch.length) { idx => (idx, similarItems(idx, minEst, minSim, f)) }
+  def allSimilarItems(minEst: Double): Iterator[(Int, Iterator[Sim])] =
+    Iterator.tabulate(sketch.length) { idx => (idx, similarItems(idx, minEst, 0.0, null)) }
+
+  //def similarItemsStream(minEst: Double, minSim: Double, f: SimFun): Iterator[Sim]
+  def similarItemsStream(minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] = {
+    val minBits = sketch.minSameBits(minEst)
+
+    if (includeSketches) {
+      (for ((idxs, skArr) <- rawStream) yield {
+        val res = collection.mutable.ArrayBuffer[Sim]()
+        var i = 0
+        while (i < idxs.length) {
+          var j = i+1
+          while (j < idxs.length) {
+            val bits = estimator.sameBits(skArr, i, skArr, j)
+            if (bits >= minBits) {
+              var sim: Double = 0.0
+              if (f == null || { sim = f(idxs(i), idxs(j)) ; sim >= minSim }) {
+                res += Sim(idxs(i), idxs(j), estimator.estimateSimilarity(bits), sim)
+              }
+            }
+            j += 1
+          }
+          i += 1
+        }
+        res
+      }).flatten
+
+    } else {
+      val skarr = getSketchArray
+
+      (for (idxs <- rawStreamIndexes) yield {
+        val res = collection.mutable.ArrayBuffer[Sim]()
+        var i = 0
+        while (i < idxs.length) {
+          var j = i+1
+          while (j < idxs.length) {
+            val bits = estimator.sameBits(skarr, idxs(i), skarr, idxs(j))
+            if (bits >= minBits) {
+              var sim: Double = 0.0
+              if (f == null || { sim = f(idxs(i), idxs(j)) ; sim >= minSim }) {
+                res += Sim(idxs(i), idxs(j), estimator.estimateSimilarity(bits), sim)
+              }
+            }
+            j += 1
+          }
+          i += 1
+        }
+        res
+      }).flatten
+    }
+  }
+  def similarItemsStream(minEst: Double): Iterator[Sim] = similarItemsStream(minEst, 0.0, null)
+
+  def selectCandidates(idx: Int): Idxs =
+    if (cfg.maxCandidates == Int.MaxValue) {
+      candidateIndexes(getSketchArray, idx)
+    } else {
+      val map = new IntFreqMap(initialSize = 32, loadFactor = 0.3, freqThreshold = bands)
+      for (is <- rawCandidateIndexes(getSketchArray, idx)) { map ++= (is, 1) }
+      map.topK(cfg.maxCandidates)
+    }
+
 }
 
 
 
-final class IntLSH(
-		val sketch: IntSketch,
-		//val data: Array[Map[Int, (Array[Int], Array[Int])]],
-		val idxs: Array[Array[Int]], val sketches: Array[Array[Int]],
-		val sketchLength: Int, bands: Int, bandLength: Int, hashMask: Int
-	) extends LSH with Serializable {
 
-	private val bandSize = hashMask + 1
+/** bandLengh - how many elements in one band
+  * hashBits  - how many bits of a hash is used (2^hashBits should be rougly equal to number of items)
+  */
+final case class IntLSH(
+    sketch: IntSketch, estimator: IntEstimator, cfg: LSHCfg,
+    idxs: Array[Array[Int]], sketches: Array[Array[Int]],
+    sketchLength: Int, bands: Int, bandLength: Int, hashBits: Int,
+    includeSketches: Boolean
+  ) extends LSH with Serializable {
 
+  type SketchArray = Array[Int]
+  type Sketching = IntSketching
+  type Sketch = IntSketch
 
-	def bandHashes(sketchArray: Array[Int], idx: Int): Iterator[Int] =
-		for (b <- 0 until bands iterator) yield
-			LSH.hashSlice(sketchArray, sketch.sketchLength, idx, b, bandLength, hashMask)
+  if (sketches != null) {
+    require(idxs.length == sketches.length)
+  }
 
-	def bandHash(sketchArray: Array[Int], idx: Int, band: Int): Int =
-		LSH.hashSlice(sketchArray, sketch.sketchLength, idx, band, bandLength, hashMask)
+  def withConfig(newCfg: LSHCfg) = copy(cfg = newCfg)
 
+  def bandHashes(sketchArray: SketchArray, idx: Int): Iterator[Int] =
+    Iterator.tabulate(bands) { b => bandHash(sketchArray, idx, b) }
 
+  def bandHash(sketchArray: SketchArray, idx: Int, band: Int): Int =
+    LSH.hashSlice(sketchArray, sketch.sketchLength, idx, band, bandLength, hashBits)
 
-	def candidates(idx: Int): Seq[(Array[Int], Array[Int])] =
-		candidates(sketch.sketchArray, idx)
-
-	/** @return Seq[(idxs, sketches)] */
-//	def candidates(sketchArray: Array[Int], idx: Int): Seq[(Array[Int], Array[Int])] =
-//		for (b <- 0 until bands) yield {
-//			val h = LSH.hashSlice(sketchArray, sketch.sketchLength, idx, b, bandLength, hashMask)
-//			data(b).getOrElse(h, (Array[Int](), Array[Int]()))
-//		}
-
-	def candidates(sketchArray: Array[Int], idx: Int): Seq[(Array[Int], Array[Int])] =
-		(for (b <- 0 until bands) yield {
-			val h = LSH.hashSlice(sketchArray, sketch.sketchLength, idx, b, bandLength, hashMask)
-			val bucket = b * bandSize + h
-			(idxs(bucket), sketches(bucket))
-		}).filter(_._1 != null)
+  def rawStream: Iterator[(Idxs, SketchArray)] = (idxs.iterator zip sketches.iterator).filter(_._1 != null)
+  def rawStreamIndexes: Iterator[Idxs] = idxs.iterator filter (_ != null)
 
 
-	def candidateIndexes(sketchArray: Array[Int], idx: Int): Seq[Array[Int]] =
-		(for (b <- 0 until bands) yield {
-			val h = LSH.hashSlice(sketchArray, sketch.sketchLength, idx, b, bandLength, hashMask)
-			val bucket = b * bandSize + h
-			idxs(bucket)
-		}).filter(_ != null)
-
-	def candidateIndexes(idx: Int): Seq[Array[Int]] =
-		candidateIndexes(sketch.sketchArray, idx)
+  def rawCandidates(sketch: SketchArray, idx: Int): Array[(Idxs, SketchArray)] =
+    Array.tabulate(bands) { b =>
+      val h = LSH.hashSlice(sketch, sketchLength, idx, b, bandLength, hashBits)
+      val bucket = b * (1 << hashBits) + h
+      (idxs(bucket), if (sketches == null) null else sketches(bucket))
+    }.filter { case (idxs, _) => cfg.accept(idxs) }
 
 
-	def idxsStream: Iterator[Array[Int]] = idxs.iterator.filter(_ != null)
+  def rawCandidateIndexes(sketch: SketchArray, idx: Int): Array[Idxs] =
+    Array.tabulate(bands) { b =>
+      val h = LSH.hashSlice(sketch, sketchLength, idx, b, bandLength, hashBits)
+      val bucket = b * (1 << hashBits) + h
+      idxs(bucket)
+    }.filter { idxs => cfg.accept(idxs) }
 
-	def stream: Iterator[(Array[Int], Array[Int])] =
-		(idxs.iterator zip sketches.iterator).filter(_._1 != null)
-		// data.iterator.flatMap(_.valuesIterator)
 
-	def allSimilarities(estimateThreshold: Double): Iterator[Sim] = ???
-	def allSimilarities(estimateThreshold: Double, threshold: Double, similarityFunction: (Int, Int) => Double): Iterator[Sim] = ???
-
-	def bucketSizes = ???
 }
 
 
 
-final class BitLSH(
-		val sketch: BitSketch,
-		val idxs: Array[Array[Int]], val sketches: Array[Array[Long]],
-		val bitsPerSketch: Int, val bands: Int, val bandBits: Int, val bandStep: Int,
-		val onlyIdxs: Boolean
-	) extends LSH with Serializable {
 
-	require(idxs.length == sketches.length)
+final case class BitLSH(
+    sketch: BitSketch, estimator: BitEstimator, cfg: LSHCfg,
+    idxs: Array[Array[Int]], sketches: Array[Array[Long]],
+    bitsPerSketch: Int, bands: Int, bandBits: Int,
+    includeSketches: Boolean
+  ) extends LSH with Serializable {
 
-	private[this] val bandMask = (1 << bandBits) - 1
-	private[this] val bandSize = (1 << bandBits)
+  type SketchArray = Array[Long]
+  type Sketching = BitSketching
+  type Sketch = BitSketch
 
+  if (sketches != null) {
+    require(idxs.length == sketches.length)
+  }
 
-	def sameBits(sketchArray: Array[Long], idxA: Int, idxB: Int) = 
-		sketch.sameBits(sketchArray, sketchArray, idxA, idxB, sketch.bitsPerSketch)
+  def withConfig(newCfg: LSHCfg) = copy(cfg = newCfg)
 
+  def bandHashes(sketchArray: Array[Long], idx: Int): Iterator[Int] =
+    Iterator.tabulate(bands) { b => LSH.ripBits(sketchArray, bitsPerSketch, idx, b, bandBits) }
 
-	def bandHashes(sketchArray: Array[Long], idx: Int): Iterator[Int] =
-		for (b <- 0 until bands iterator) yield
-			LSH.ripBits(sketchArray, bitsPerSketch, idx, b, bandStep, bandMask)
-
-
-	def candidates(idx: Int): Seq[(Array[Int], Array[Long])] =
-		candidates(sketch.sketchArray, idx)
-
-	def candidates(sketchArray: Array[Long], idx: Int): Seq[(Array[Int], Array[Long])] =
-		(for (b <- 0 until bands) yield {
-			val h = LSH.ripBits(sketchArray, bitsPerSketch, idx, b, bandStep, bandMask)
-			val bucket = b * bandSize + h
-			(idxs(bucket), sketches(bucket))
-		}).filter(_._1 != null)
+  def rawStream: Iterator[(Idxs, SketchArray)] = (idxs.iterator zip sketches.iterator).filter(_._1 != null)
+  def rawStreamIndexes: Iterator[Idxs] = idxs.iterator filter (_ != null)
 
 
-	def candidateIndexes(sketchArray: Array[Long], idx: Int): Seq[Array[Int]] =
-		(for (b <- 0 until bands) yield {
-			val h = LSH.ripBits(sketchArray, bitsPerSketch, idx, b, bandStep, bandMask)
-			val bucket = b * bandSize + h
-			idxs(bucket)
-		}).filter(_ != null)
-
-	def candidateIndexes(idx: Int): Seq[Array[Int]] =
-		candidateIndexes(sketch.sketchArray, idx)
+  def rawCandidates(sketch: SketchArray, idx: Int): Array[(Idxs, SketchArray)] =
+    Array.tabulate(bands) { b =>
+      val h = LSH.ripBits(sketch, bitsPerSketch, idx, b, bandBits)
+      val bucket = b * (1 << bandBits) + h
+      (idxs(bucket), if (sketches == null) null else sketches(bucket))
+    }.filter { case (idxs, _) => cfg.accept(idxs) }
 
 
-	// will contain duplicates
-	def similarIndexes(idx: Int, estimateThreshold: Double): Array[Int] =
-		similarIndexes(sketch.sketchArray, idx, estimateThreshold, 0.0, null)
-
-	// will contain duplicates
-	def similarIndexes(idx: Int, estimateThreshold: Double, threshold: Double, similarityFunction: (Int, Int) => Double): Array[Int] =
-		similarIndexes(sketch.sketchArray, idx, estimateThreshold, threshold, similarityFunction)
-
-	// will contain duplicates
-	def similarIndexes(sketchArray: Array[Long], idx: Int, estimateThreshold: Double): Array[Int] =
-		similarIndexes(sketch.sketchArray, idx, estimateThreshold, 0.0, null)
-
-	// will contain duplicates
-	def similarIndexes(sketchArray: Array[Long], idx: Int, estimateThreshold: Double, threshold: Double, similarityFunction: (Int, Int) => Double): Array[Int] = {
-		val minBits = sketch.minSameBits(estimateThreshold)
-		val res = new collection.mutable.ArrayBuilder.ofInt
-
-		if (!onlyIdxs) {
-
-			for ((idxs, skArr) <- candidates(sketchArray, idx)) {
-				var i = 0
-				while (i < idxs.length) {
-					val bits = sketch.sameBits(skArr, sketchArray, i, idx, sketch.bitsPerSketch)
-					if (bits >= minBits) {
-						if (similarityFunction == null || similarityFunction(idxs(i), idx) >= threshold) {
-							res += idxs(i)
-						}
-					}
-					i += 1
-				}
-			}
-
-		} else {
-
-			for ((idxs, _) <- candidates(sketchArray, idx)) {
-				var i = 0
-				while (i < idxs.length) {
-					val bits = sketch.sameBits(sketchArray, sketchArray, idxs(i), idx, sketch.bitsPerSketch)
-					if (bits >= minBits) {
-						if (similarityFunction == null || similarityFunction(idxs(i), idx) >= threshold) {
-							res += idxs(i)
-						}
-					}
-					i += 1
-				}
-			}
-
-		}
-
-		res.result
-	}
-
-
-	def allSimilarities(estimateThreshold: Double): Iterator[Sim] =
-		allSimilarities(estimateThreshold, 0.0, null)
-
-
-	def allSimilarities(estimateThreshold: Double, threshold: Double, similarityFunction: (Int, Int) => Double): Iterator[Sim] = {
-		val minBits = sketch.minSameBits(estimateThreshold)
-
-		(for ((idxs, skArr) <- stream) yield {
-			val res = collection.mutable.ArrayBuffer[Sim]()
-			var i = 0
-			while (i < idxs.length) {
-				var j = i+1
-				while (j < idxs.length) {
-					val bits = sketch.sameBits(skArr, skArr, i, j, sketch.bitsPerSketch)
-					if (bits >= minBits) {
-						var sim: Double = 0.0
-						if (similarityFunction == null || { sim = similarityFunction(idxs(i), idxs(j)) ; sim >= threshold }) {
-							res += Sim(idxs(i), idxs(j), sketch.estimateSimilarity(bits), sim)
-						}
-					}
-					j += 1
-				}
-				i += 1
-			}
-			res
-		}).flatten
-	}
-
-
-	def stream: Iterator[(Array[Int], Array[Long])] =
-		(idxs.iterator zip sketches.iterator).filter(_._1 != null)
-
-
-	def bucketSizes = {
-		def len(xs: Array[Int]) = if (xs == null) 0 else xs.length
-
-		val sum = idxs.map(len).sum
-		val cnt = idxs.length
-		val avg = sum.toDouble / cnt
-		val zeros = idxs count (xs => xs == null || xs.length == 0)
-
-		val min = idxs.map(len).min
-		val max = idxs.map(len).max
-
-		val lengths = idxs.map(len).sortBy(-_).take(100)
-
-		(avg, min, max, zeros, lengths.toVector)
-	}
-
+  def rawCandidateIndexes(sketch: SketchArray, idx: Int): Array[Idxs] =
+    Array.tabulate(bands) { b =>
+      val h = LSH.ripBits(sketch, bitsPerSketch, idx, b, bandBits)
+      val bucket = b * (1 << bandBits) + h
+      idxs(bucket)
+    }.filter { idxs => cfg.accept(idxs) }
 }
