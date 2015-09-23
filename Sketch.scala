@@ -29,6 +29,9 @@ trait Sketching[SketchArray] {
 
 trait Sketch[SketchArray] extends Serializable {
 
+  type Idxs = Array[Int]
+  type SimFun = (Int, Int) => Double
+
   def sketchArray: SketchArray
   def length: Int
 
@@ -37,6 +40,94 @@ trait Sketch[SketchArray] extends Serializable {
   def estimateSimilarity(idxA: Int, idxB: Int): Double = estimator.estimateSimilarity(sameBits(idxA, idxB))
   def minSameBits(sim: Double): Int = estimator.minSameBits(sim)
   def empty: Sketch[SketchArray]
+
+  def similarIndexes(idx: Int, minEst: Double): Idxs = similarIndexes(idx, minEst, 0.0, null)
+  def similarIndexes(idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs = {
+    val minBits = estimator.minSameBits(minEst)
+    val res = new collection.mutable.ArrayBuilder.ofInt
+    var i = 0 ; while (i < length) {
+      val bits = sameBits(idx, i)
+      if (bits >= minBits && idx != i && (f == null || f(i, idx) >= minSim)) {
+        res += i
+      }
+      i += 1
+    }
+    res.result
+  }
+
+  def similarItems(idx: Int, minEst: Double): Iterator[Sim] = similarItems(idx, minEst, 0.0, null)
+  def similarItems(idx: Int, minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] = {
+    val minBits = estimator.minSameBits(minEst)
+    val res = new collection.mutable.ArrayBuffer[Sim]
+    var i = 0 ; while (i < length) {
+      val bits = sameBits(idx, i)
+      var sim: Double = 0.0
+      if (bits >= minBits && idx != i && (f == null || { sim = f(i, idx) ; sim >= minSim })) {
+        res += Sim(idx, i, estimator.estimateSimilarity(bits), sim)
+      }
+      i += 1
+    }
+    res.iterator
+  }
+
+  def allSimilarIndexes(minEst: Double, minSim: Double, f: SimFun, compact: Boolean = false): Iterator[(Int, Idxs)] = {
+    val minBits = estimator.minSameBits(minEst)
+
+    // this needs in the worst case O(n * s / 4) extra memory, where n is the
+    // number of items in this sketch and s is average number of similar
+    // indexes
+    if (!compact) {
+      val res = Array.fill(length)(new collection.mutable.ArrayBuilder.ofInt)
+      Iterator.tabulate(length) { i =>
+        var j = i+1 ; while (j < length) {
+          val bits = sameBits(i, j)
+          if (bits >= minBits && i != j && (f == null || f(i, j) >= minSim)) {
+            res(i) += j
+            res(j) += i
+          }
+          j += 1
+        }
+        val arr = res(i).result
+        res(i) = null
+        (i, arr)
+      }
+
+    // this needs no additional memory but it have to do full n**2 iterations
+    } else {
+      Iterator.tabulate(length) { idx => (idx, similarIndexes(idx, minEst, minSim, f)) }
+    }
+  }
+  def allSimilarIndexes(minEst: Double): Iterator[(Int, Idxs)] =
+    allSimilarIndexes(minEst, 0.0, null)
+
+
+  def allSimilarItems(minEst: Double, minSim: Double, f: SimFun, compact: Boolean = false): Iterator[(Int, Iterator[Sim])] = {
+    val minBits = estimator.minSameBits(minEst)
+
+    if (!compact) {
+      val res = Array.fill(length)(new collection.mutable.ArrayBuilder.ofRef[Sim])
+      Iterator.tabulate(length) { i =>
+        var j = i+1 ; while (j < length) {
+          val bits = sameBits(i, j)
+          var sim: Double = 0.0
+          if (bits >= minBits && i != j && (f == null || { sim = f(i, j) ; sim >= minSim })) {
+            val est = estimator.estimateSimilarity(bits)
+            res(i) += Sim(i, j, est, sim)
+            res(j) += Sim(j, i, est, sim)
+          }
+          j += 1
+        }
+        val arr = res(i).result
+        res(i) = null
+        (i, arr.iterator)
+      }
+
+    } else {
+      Iterator.tabulate(length) { idx => (idx, similarItems(idx, minEst, minSim, f)) }
+    }
+  }
+  def allSimilarItems(minEst: Double): Iterator[(Int, Iterator[Sim])] =
+    allSimilarItems(minEst, 0.0, null)
 }
 
 trait Estimator[SketchArray] {
