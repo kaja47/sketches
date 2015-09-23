@@ -60,10 +60,13 @@ trait IntEstimator extends Estimator[Array[Int]] {
   def sameBits(arrA: Array[Int], idxA: Int, arrB: Array[Int], idxB: Int) = {
     var a = idxA * sketchLength
     var b = idxB * sketchLength
-    var i, same = 0
-    while (i < sketchLength) {
-      same += (if (arrA(a+i) == arrB(b+i)) 1 else 0)
-      i += 1
+    var same = 0
+    val end = a + sketchLength
+
+    while (a < end) {
+      same += (if (arrA(a) == arrB(b)) 1 else 0)
+      a += 1
+      b += 1
     }
     same
   }
