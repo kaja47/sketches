@@ -56,15 +56,14 @@ object crap {
   * It's precise if at most K elements have higher frequency than $freqThreshold.
   **/
 final class IntFreqMap(initialSize: Int = 32, loadFactor: Double = 0.3, freqThreshold: Int = 16) {
-	import java.lang.Integer.highestOneBit
 
 	require(loadFactor > 0.0 && loadFactor < 1.0)
 	require(freqThreshold > 1)
 
-	private[this] var capacity = math.max(higherPowerOfTwo(initialSize), 16)
+	private[this] var capacity = math.max(Bits.higherPowerOfTwo(initialSize), 16)
 	private[this] var _size = 0
 	private[this] var maxSize = (capacity * loadFactor).toInt
-	private[this] val realFreqThreshold = higherPowerOfTwo(freqThreshold)
+	private[this] val realFreqThreshold = Bits.higherPowerOfTwo(freqThreshold)
 
 	private[this] var keys: Array[Int] = new Array[Int](capacity)
 	private[this] var freq: Array[Int] = new Array[Int](capacity) // frequency of corresponding key
@@ -158,9 +157,6 @@ final class IntFreqMap(initialSize: Int = 32, loadFactor: Double = 0.3, freqThre
 		lowFreqs(if (oldFreq < realFreqThreshold) oldFreq & mask else realFreqThreshold) -= 1
 		lowFreqs(if (newFreq < realFreqThreshold) newFreq & mask else realFreqThreshold) += 1
 	}
-
-	private def higherPowerOfTwo(x: Int) =
-		highestOneBit(x) << (if (highestOneBit(x) == x) 0 else 1)
 
 	private def findIdx(k: Int) = {
 		val mask = capacity - 1

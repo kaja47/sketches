@@ -351,7 +351,12 @@ object fastSparse {
 
 }
 
-object Bits extends App {
+
+object Bits {
+
+  import java.lang.Float. { floatToRawIntBits, intBitsToFloat }
+  import java.lang.Integer.highestOneBit
+
   /** Extract up to 64 bits from a long array. The array is split into number of
     * blocks of length `blockLen`. Bits may span two neighbouring array
     * elements. Requested bits that overrun block length are extracted from the
@@ -431,5 +436,8 @@ object Bits extends App {
   /** based on http://stereopsis.com/radix.html */
   protected def floatFlip(f: Int) = f ^ (-(f >>> 31) | 0x80000000)
   protected def floatUnflip(f: Int) = f ^ (((f >>> 31) - 1) | 0x80000000)
+
+  def higherPowerOfTwo(x: Int) =
+    highestOneBit(x) << (if (highestOneBit(x) == x) 0 else 1)
 
 }
