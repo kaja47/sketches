@@ -236,12 +236,52 @@ final class IntFreqMap(initialSize: Int = 32, loadFactor: Double = 0.3, freqThre
 }
 
 
+class TopKFloatInt(k: Int) {
+  private val heap = new MinFloatIntHeap(k+1)
+  private var min = Float.NegativeInfinity
+
+  def insert(key: Float, value: Int) = {
+    if (heap.size < k) {
+      heap.insert(key, value)
+
+    } else if (key >= min) {
+      heap.insert(key, value)
+      heap.deleteMin()
+      min = heap.minKey
+    }
+  }
+
+  def values = {
+    val res = new Array[Int](heap.size)
+    var i = res.length-1 ; while (i >= 0) {
+      res(i) = heap.minValue
+      heap.deleteMin()
+      i -= 1
+    }
+    res
+  }
+}
+
+class MinFloatIntHeap(val capacity: Int) {
+  private val heap = new MinIntIntHeap(capacity)
+
+  def size = heap.size
+  def isEmpty = heap.isEmpty
+  def nonEmpty = heap.nonEmpty
+
+  def insert(key: Float, value: Int) = heap.insert(Bits.floatToSortableInt(key), value)
+  def minKey: Float = Bits.sortableIntToFloat(heap.minKey)
+  def minValue: Int = heap.minValue
+  def deleteMin(): Float = Bits.sortableIntToFloat(heap.deleteMin())
+}
+
+
 class MinIntIntHeap(val capacity: Int) {
 
   // both key and index are packed inside one Long value
   // key which is used for comparison forms high 4 bytes of Long
-  val arr = new Array[Long](capacity)
-  var head = 0
+  private val arr = new Array[Long](capacity)
+  private var head = 0
 
   def size = head
   def isEmpty = head == 0
