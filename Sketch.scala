@@ -70,7 +70,7 @@ trait Sketch[SketchArray] extends Serializable {
     res.iterator
   }
 
-  def allSimilarIndexes(minEst: Double, minSim: Double, f: SimFun, compact: Boolean = false): Iterator[(Int, Idxs)] = {
+  def allSimilarIndexes(minEst: Double, minSim: Double, f: SimFun, compact: Boolean = true): Iterator[(Int, Idxs)] = {
     val minBits = estimator.minSameBits(minEst)
 
     // this needs in the worst case O(n * s / 4) extra memory, where n is the

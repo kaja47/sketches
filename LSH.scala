@@ -14,7 +14,7 @@ case class LSHBuildCfg(
   maxBucketSize: Int = Int.MaxValue,
 
   /** Determine how many bands are computed during one pass over data.
-    * Multiple band groups can be execute in parellel.
+    * Multiple band groups can be execute in parallel.
     *
     * Increasing this number may lower available parallelisms. On the other
     * hand it increases locality or reference which may lead to better
@@ -30,7 +30,7 @@ case class LSHBuildCfg(
   bandsInOnePass: Int = 1,
 
   /** If this is set to true, program does one prior pass to count number of
-    * values associated with every hash. It needs to do more work but alocates
+    * values associated with every hash. It needs to do more work but allocates
     * only necessary amount of memory. */
   collectCounts: Boolean = false,
 
@@ -234,7 +234,7 @@ object LSH {
   *  - can only provide list of candidates, cannot estimate similarities
   *
   * methods with raw prefix might return duplicates
-  * methods withount raw prefix must never return duplicates and queried item itself
+  * methods without raw prefix must never return duplicates and queried item itself
   *
   * idxs must be sorted
   */
@@ -407,7 +407,7 @@ abstract class LSH { self =>
     similarItems(getSketchArray, idx, minEst, 0.0, null)
 
   /** Needs to store all similar indexes in memory + some overhead, but it's
-    * much faster, because it needs to do only half of iterataions and accessed
+    * much faster, because it needs to do only half of iterations and accessed
     * data have better cache locality. */
   protected def _allSimilarIndexes_notCompact(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, Idxs)] = {
     val minBits = sketch.minSameBits(minEst)
@@ -548,7 +548,7 @@ abstract class LSH { self =>
 
 
 /** bandLengh - how many elements in one band
-  * hashBits  - how many bits of a hash is used (2^hashBits should be rougly equal to number of items)
+  * hashBits  - how many bits of a hash is used (2^hashBits should be roughly equal to number of items)
   */
 final case class IntLSH(
     sketch: IntSketch, estimator: IntEstimator, cfg: LSHCfg,
