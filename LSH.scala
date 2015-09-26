@@ -474,9 +474,19 @@ abstract class LSH { self =>
     if (cfg.maxCandidates == Int.MaxValue) {
       candidateIndexes(getSketchArray, idx)
     } else {
-      val map = new IntFreqMap(initialSize = 32, loadFactor = 0.3, freqThreshold = bands)
-      for (is <- rawCandidateIndexes(getSketchArray, idx)) { map ++= (is, 1) }
-      map.topK(cfg.maxCandidates)
+
+      val rci = rawCandidateIndexes(getSketchArray, idx)
+
+      val candidateCount = rci.iterator.map(_.length).sum
+
+      if (candidateCount <= cfg.maxCandidates) {
+        fastSparse.union(rci)
+
+      } else {
+        val map = new IntFreqMap(initialSize = 32, loadFactor = 0.42, freqThreshold = bands)
+        for (is <- rci) { map ++= (is, 1) }
+        map.topK(cfg.maxCandidates)
+      }
     }
 
 }
