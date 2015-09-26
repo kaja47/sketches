@@ -85,7 +85,7 @@ object LSH {
         val end = bs.last
         var i = 0 ; while (i < sk.length) {
           var b = base ; while (b <= end) {
-            val h = skslices(b).getSketchFragmentAsLong(i, 0, bandBits).toInt
+            val h = skslices(b-base).getSketchFragmentAsLong(i, 0, bandBits).toInt
             assert(h <= bandSize)
             f((b - base) * bandSize + h, i)
             b += 1
@@ -158,7 +158,7 @@ object LSH {
               val _sk = sk.asInstanceOf[IntSketch]
               hashSlice(_sk.sketchArray, _sk.sketchLength, i, b, bandElements, hashBits)
             } else {
-              skslices(b).writeSketchFragment(i, scratchpads(b), 0)
+              skslices(b-base).writeSketchFragment(i, scratchpads(b), 0)
               hashSlice(scratchpads(b), bandElements, 0, 0, bandElements, hashBits)
             }
             f((b - base) * bandSize + h, i)
