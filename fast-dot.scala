@@ -260,7 +260,6 @@ object fastSparse {
   }
 
 
-
   private def _initUnion(sets: Array[Array[Int]]): (MinIntIntHeap, Array[Int]) = {
     val heap = new MinIntIntHeap(sets.length)
     val positions = new Array[Int](sets.length)
@@ -278,8 +277,10 @@ object fastSparse {
 
   private def _stepUnion(sets: Array[Array[Int]], i: Int, heap: MinIntIntHeap, positions: Array[Int]) = {
     if (positions(i) < sets(i).length) {
-      heap.insert(sets(i)(positions(i)), i)
+      heap.deleteMinAndInsert(sets(i)(positions(i)), i)
       positions(i) += 1
+    } else {
+      heap.deleteMin()
     }
   }
 
@@ -293,8 +294,6 @@ object fastSparse {
     while (heap.nonEmpty) {
       val key = heap.minKey
       val i = heap.minValue
-
-      heap.deleteMin()
 
       if (key.toLong != min) {
         size += 1
@@ -316,8 +315,6 @@ object fastSparse {
     while (heap.nonEmpty) {
       val key = heap.minKey
       val i = heap.minValue
-
-      heap.deleteMin()
 
       if (key.toLong != min) {
         buff += key
