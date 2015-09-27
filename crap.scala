@@ -272,7 +272,7 @@ class MinFloatIntHeap(val capacity: Int) {
   def insert(key: Float, value: Int) = heap.insert(Bits.floatToSortableInt(key), value)
   def minKey: Float = Bits.sortableIntToFloat(heap.minKey)
   def minValue: Int = heap.minValue
-  def deleteMin(): Float = Bits.sortableIntToFloat(heap.deleteMin())
+  def deleteMin(): Unit = heap.deleteMin()
 }
 
 
@@ -280,30 +280,39 @@ class MinIntIntHeap(val capacity: Int) {
 
   // both key and index are packed inside one Long value
   // key which is used for comparison forms high 4 bytes of Long
-  private val arr = new Array[Long](capacity)
-  private var head = 0
+  private val arr = new Array[Long](capacity+2)
+  private var head = 0+1
 
-  def size = head
-  def isEmpty = head == 0
-  def nonEmpty = head != 0
+  def size = head-1
+  def isEmpty = head == (0+1)
+  def nonEmpty = head != (0+1)
 
-  def insert(key: Int, value: Int) = {
+  def insert(key: Int, value: Int): Unit = {
     arr(head) = pack(key, value)
     swim(head)
     head += 1
   }
 
-  def minKey: Int = high(arr(0))
-  def minValue: Int = low(arr(0))
+  def minKey: Int = high(arr(0+1))
+  def minValue: Int = low(arr(0+1))
 
-  def deleteMin(): Int = {
-    if (head == 0) throw new NoSuchElementException("underflow")
-    val minKey = high(arr(0))
+  def deleteMin(): Unit = {
+    if (head == 0+1) throw new NoSuchElementException("underflow")
+    //val minKey = high(arr(0+1))
     head -= 1
-    swap(0, head)
+    swap(0+1, head)
     arr(head) = 0
-    sink(0)
-    minKey
+    sink(0+1)
+  }
+
+  /** This method is equivalent to deleteMin() followed by insert(), but it's
+    * more efficient. */
+  def deleteMinAndInsert(key: Int, value: Int): Unit = {
+    //deleteMin()
+    //insert(key, value)
+    if (head == 0+1) throw new NoSuchElementException("underflow")
+    arr(0+1) = pack(key, value)
+    sink(0+1)
   }
 
 
@@ -317,27 +326,30 @@ class MinIntIntHeap(val capacity: Int) {
     arr(b) = tmp
   }
 
-  private def parent(pos: Int) = (pos + 1) / 2 - 1
-  private def child(pos: Int) = pos * 2 + 1
+  //private def parent(pos: Int) = (pos + 1) / 2 - 1
+  //private def child(pos: Int) = pos * 2 + 1
+  private def parent(pos: Int) = pos / 2
+  private def child(pos: Int) = pos * 2
 
   // moves value at the given position up towards the root
   private def swim(_pos: Int): Unit = {
     var pos = _pos
-    while (pos > 0 && arr(parent(pos)) > arr(pos)) {
+    while (pos > 0+1 && arr(parent(pos)) > arr(pos)) {
       swap(parent(pos), pos)
       pos = parent(pos)
     }
   }
 
-  // moves value at the given position down
+  // moves value at the given position down towards leaves
   private def sink(_pos: Int): Unit = {
     var pos = _pos
     while (child(pos) < head) {
-      var j = child(pos)
-      if (j < (head - 1) && arr(j) > arr(j+1)) j += 1
-      if (arr(pos) <= arr(j)) return
-      swap(pos, j)
-      pos = j
+      var ch = child(pos)
+      //if (ch < (head - 1) && arr(ch) > arr(ch+1)) ch += 1
+      ch += ((ch - (head - 1)) >>> 31) & ((arr(ch+1) - arr(ch)) >>> 63).toInt
+      if (arr(pos) <= arr(ch)) return
+      swap(pos, ch)
+      pos = ch
     }
   }
 
