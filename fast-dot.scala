@@ -433,6 +433,9 @@ object Bits {
   def unpackSortableFloatHi(l: Long): Float = intBitsToFloat(floatUnflip(unpackIntHi(l)))
   def unpackSortableFloatLo(l: Long): Float = intBitsToFloat(floatUnflip(unpackIntLo(l)))
 
+  def floatToSortableInt(f: Float) = floatFlip(floatToRawIntBits(f))
+  def sortableIntToFloat(i: Int)   = intBitsToFloat(floatUnflip(i))
+
   /** based on http://stereopsis.com/radix.html */
   protected def floatFlip(f: Int) = f ^ (-(f >>> 31) | 0x80000000)
   protected def floatUnflip(f: Int) = f ^ (((f >>> 31) - 1) | 0x80000000)
