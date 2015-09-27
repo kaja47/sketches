@@ -346,7 +346,7 @@ class MinIntIntHeap(val capacity: Int) {
     while (child(pos) < head) {
       var ch = child(pos)
       //if (ch < (head - 1) && arr(ch) > arr(ch+1)) ch += 1
-      ch += ((ch - (head - 1)) >>> 31) & ((arr(ch+1) - arr(ch)) >>> 63).toInt
+      ch += (((ch.toLong - (head - 1)) & (arr(ch+1) - arr(ch))) >>> 63).toInt
       if (arr(pos) <= arr(ch)) return
       swap(pos, ch)
       pos = ch
