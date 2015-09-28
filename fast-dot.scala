@@ -430,12 +430,16 @@ object Bits {
   def unpackSortableFloatHi(l: Long): Float = intBitsToFloat(floatUnflip(unpackIntHi(l)))
   def unpackSortableFloatLo(l: Long): Float = intBitsToFloat(floatUnflip(unpackIntLo(l)))
 
+  /** Converts float to signed int that preserve ordering,
+    *  ie. if a < b, then ftsi(a) < ftsi(b)
+    *  and if a < 0, then ftsi(a) < 0 */
   def floatToSortableInt(f: Float) = floatFlip(floatToRawIntBits(f))
   def sortableIntToFloat(i: Int)   = intBitsToFloat(floatUnflip(i))
 
-  /** based on http://stereopsis.com/radix.html */
-  protected def floatFlip(f: Int) = f ^ (-(f >>> 31) | 0x80000000)
-  protected def floatUnflip(f: Int) = f ^ (((f >>> 31) - 1) | 0x80000000)
+  /** based on http://stereopsis.com/radix.html, except this converts to signed
+    * ints. Only difference is that sign bit is never flipped. */
+  protected def floatFlip(f: Int) = f ^ (-(f >>> 31) & 0x7FFFFFFF) // float to signed int
+  protected def floatUnflip(f: Int) = f ^ (-(f >>> 31) & 0x7FFFFFFF) // signed int to float
 
   def higherPowerOfTwo(x: Int) =
     highestOneBit(x) << (if (highestOneBit(x) == x) 0 else 1)
