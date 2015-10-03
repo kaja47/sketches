@@ -146,22 +146,10 @@ object fastSparse {
     while (ai != a.length && bi != b.length) {
       val av = a(ai)
       val bv = b(bi)
-      if (av == bv) {
-        res(i) = av
-        i += 1
-        ai += 1
-        bi += 1
-
-      } else if (av < bv) {
-        res(i) = av
-        i += 1
-        ai += 1
-
-      } else {
-        res(i) = bv
-        i += 1
-        bi += 1
-      }
+      res(i) = (if (av > bv) bv else av)
+      ai += (if (av <= bv) 1 else 0)
+      bi += (if (av >= bv) 1 else 0)
+      i += 1
     }
 
     while (ai != a.length) {
