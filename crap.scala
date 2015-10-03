@@ -51,6 +51,110 @@ object crap {
 }
 
 
+/** Set specialized for int values that uses direct hashing.
+  *
+  * slots states: free -> occupied -> deleted
+  */
+class IntSet(initialSize: Int = 16, loadFactor: Double = 0.5) {
+  require(loadFactor > 0.0 && loadFactor < 1.0)
+
+  private[this] var capacity    = math.max(Bits.higherPowerOfTwo(initialSize), 16)
+  private[this] var bitmapWords = getBitmapWords(capacity)
+  private[this] var maxSize     = getMaxSize(capacity)
+  private[this] var arr: Array[Int] = new Array[Int](capacity + bitmapWords)
+  private[this] var filled = 0
+  private[this] var _size = 0
+
+  def size = _size
+
+  def += (k: Int): this.type = {
+    val i = findIdx(k)
+    if (!isOccupied(arr, i)) {
+      _size += 1
+      filled += 1
+    }
+    setOccupied(arr, i)
+    arr(bitmapWords + i) = k
+    if (filled > maxSize) {
+      if (size <= filled / 2) grow(1)
+      else grow(2)
+    }
+    this
+  }
+
+  def -= (k: Int): this.type = {
+    val i = findIdx(k)
+    if (!isOccupied(arr, i)) return this
+    _size -= 1
+    setDeleted(arr, i)
+    this
+  }
+
+  def contains(k: Int): Boolean = {
+    val i = findIdx(k)
+    isOccupied(arr, i) && !isDeleted(arr, i) && arr(bitmapWords + i) == k
+  }
+
+  def toArray: Array[Int] = toArray(new Array[Int](size), 0)
+
+  def toArray(res: Array[Int], off: Int): Array[Int] = {
+    var i, j = 0
+    while (i < capacity) {
+      if (isOccupied(arr, i) && !isDeleted(arr, i)) {
+        res(j+off) = arr(bitmapWords + i)
+        j += 1
+      }
+      i += 1
+    }
+    res
+  }
+
+  // Get position of the first empty slot or slot containing value k.
+  // Must never return deleted slot.
+  private def findIdx(k: Int) = {
+    val mask = capacity - 1
+    var pos = k & mask
+    var i = pos
+    while (isDeleted(arr, i) || (isOccupied(arr, i) && arr(bitmapWords + i) != k)) {
+      i = (i + 1) & mask
+    }
+    i
+  }
+
+  protected def getBitmapWords(capacity: Int) = ((capacity * 2) + 31) / 32
+  protected def getMaxSize(capacity: Int) = (capacity * loadFactor).toInt
+
+  def getBit(arr: Array[Int], bit: Int) = (arr(bit / 32) & (1 << (bit % 32))) != 0
+  def setBit(arr: Array[Int], bit: Int) = arr(bit / 32) |= (1 << (bit % 32))
+
+  private def isOccupied(arr: Array[Int], idx: Int) = getBit(arr, idx*2)
+  private def setOccupied(arr: Array[Int], idx: Int) = setBit(arr, idx*2)
+  private def isDeleted(arr: Array[Int], idx: Int) = getBit(arr, idx*2+1)
+  private def setDeleted(arr: Array[Int], idx: Int) = setBit(arr, idx*2+1)
+
+  private def grow(factor: Int): Unit = {
+    val oldCap = capacity
+    val oldBmw = bitmapWords
+    val oldArr = arr
+
+    capacity *= factor
+    bitmapWords = getBitmapWords(capacity)
+    maxSize = getMaxSize(capacity)
+    arr = new Array[Int](capacity + bitmapWords)
+    filled = 0
+    _size = 0
+
+    var i = 0
+    while (i < oldCap) {
+      if (isOccupied(oldArr, i) && !isDeleted(oldArr, i)) {
+        val k = oldArr(oldBmw + i)
+        this += k
+      }
+      i += 1
+    }
+  }
+}
+
 
 /** Frequency map intended for getting top-K elements from heavily skewed datasets.
   * It's precise if at most K elements have higher frequency than $freqThreshold.
