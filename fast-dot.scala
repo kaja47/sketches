@@ -276,46 +276,57 @@ object fastSparse {
 
 
   /** Computes size of union of array of sets via multiway merge */
-  def unionSize(sets: Array[Array[Int]]): Int = {
-    val (heap, positions) = _initUnion(sets)
-    var min = Long.MinValue
-    var size = 0
+  def unionSize(sets: Array[Array[Int]]): Int =
+    sets.length match {
+      case 0 => 0
+      case 1 => sets(0).length
+      case 2 => unionSize(sets(0), sets(1))
+      case _ =>
+        val (heap, positions) = _initUnion(sets)
+        var min = Long.MinValue
+        var size = 0
 
-    while (heap.nonEmpty) {
-      val key = heap.minKey
-      val i = heap.minValue
+        while (heap.nonEmpty) {
+          val key = heap.minKey
+          val i = heap.minValue
 
-      if (key.toLong != min) {
-        size += 1
-        min = key
-      }
+          if (key.toLong != min) {
+            size += 1
+            min = key
+          }
 
-      _stepUnion(sets, i, heap, positions)
+          _stepUnion(sets, i, heap, positions)
+        }
+
+        size
     }
 
-    size
-  }
 
+  def union(sets: Array[Array[Int]]): Array[Int] =
+    sets.length match {
+      case 0 => new Array[Int](0)
+      case 1 => sets(0)
+      case 2 => union(sets(0), sets(1))
+      case _ =>
+        val (heap, positions) = _initUnion(sets)
+        var min = Long.MinValue
+        val buff = new collection.mutable.ArrayBuilder.ofInt
 
-  def union(sets: Array[Array[Int]]): Array[Int] = {
-    val (heap, positions) = _initUnion(sets)
-    var min = Long.MinValue
-    val buff = new collection.mutable.ArrayBuilder.ofInt
+        while (heap.nonEmpty) {
+          val key = heap.minKey
+          val i = heap.minValue
 
-    while (heap.nonEmpty) {
-      val key = heap.minKey
-      val i = heap.minValue
+          if (key.toLong != min) {
+            buff += key
+            min = key
+          }
 
-      if (key.toLong != min) {
-        buff += key
-        min = key
-      }
+          _stepUnion(sets, i, heap, positions)
+        }
 
-      _stepUnion(sets, i, heap, positions)
+        buff.result
     }
 
-    buff.result
-  }
 
 
   def mergeSortedArrays(a: Array[Int], b: Array[Int]): Array[Int] =
