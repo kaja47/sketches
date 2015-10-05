@@ -45,7 +45,6 @@ object fastSparse {
     java.util.Arrays.sort(arr)
     if (isDistinctIncreasingArray(arr)) arr
     else arr.distinct
-
   }
 
   def isDistinctIncreasingArray(arr: Array[Int]): Boolean = {
@@ -136,7 +135,7 @@ object fastSparse {
   def jaccardSimilarity(a: Array[Int], b: Array[Int]): Double = {
     val is = intersectionSize(a, b)
     val un = a.length + b.length - is
-    is.toDouble / un
+    if (un == 0) 0 else is.toDouble / un
   }
 
 
@@ -241,10 +240,13 @@ object fastSparse {
     s
   }
 
-  def weightedJaccardSimilarity(a: Array[Int], b: Array[Int], ws: Array[Double]): Double = {
+  def weightedJaccardSimilarity(a: Array[Int], b: Array[Int], ws: Array[Double]): Double =
+    weightedJaccardSimilarity(a, b, ws, _sum(a, ws), _sum(b, ws))
+
+  def weightedJaccardSimilarity(a: Array[Int], b: Array[Int], ws: Array[Double], wasum: Double, wbsum: Double): Double = {
     val is = weightedIntersectionSize(a, b, ws)
-    val un = _sum(a, ws) + _sum(b, ws) - is
-    is.toDouble / un
+    val un = wasum + wbsum - is
+    if (un == 0) 0 else is / un
   }
 
 
