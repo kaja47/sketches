@@ -53,12 +53,12 @@ object crap {
 
 /** Set specialized for int values that uses direct hashing.
   *
-  * slots states: free -> occupied -> deleted
+  * slots states: free (00) → occupied (10) → deleted (11)
   */
 class IntSet(initialSize: Int = 16, loadFactor: Double = 0.5) {
   require(loadFactor > 0.0 && loadFactor < 1.0)
 
-  private[this] var capacity    = math.max(Bits.higherPowerOfTwo(initialSize), 16)
+  private[this] var capacity    = math.max(Bits.higherPowerOfTwo(initialSize), 8)
   private[this] var bitmapWords = getBitmapWords(capacity)
   private[this] var maxSize     = getMaxSize(capacity)
   private[this] var arr: Array[Int] = new Array[Int](capacity + bitmapWords)
@@ -85,8 +85,15 @@ class IntSet(initialSize: Int = 16, loadFactor: Double = 0.5) {
   def -= (k: Int): this.type = {
     val i = findIdx(k)
     if (!isOccupied(arr, i)) return this
-    _size -= 1
-    setDeleted(arr, i)
+    // if the next slot is not occupied (and therefore also not deleted), delete directly
+    if (!isOccupied(arr, (i + 1) & (capacity - 1))) { 
+      _size -= 1
+      filled -= 1
+      setUnoccupied(arr, i)
+    } else {
+      _size -= 1
+      setDeleted(arr, i)
+    }
     this
   }
 
@@ -115,7 +122,7 @@ class IntSet(initialSize: Int = 16, loadFactor: Double = 0.5) {
     val mask = capacity - 1
     var pos = k & mask
     var i = pos
-    while (isDeleted(arr, i) || (isOccupied(arr, i) && arr(bitmapWords + i) != k)) {
+    while (isDeleted(arr, i) | (isOccupied(arr, i) && arr(bitmapWords + i) != k)) {
       i = (i + 1) & mask
     }
     i
@@ -126,11 +133,13 @@ class IntSet(initialSize: Int = 16, loadFactor: Double = 0.5) {
 
   def getBit(arr: Array[Int], bit: Int) = (arr(bit / 32) & (1 << (bit % 32))) != 0
   def setBit(arr: Array[Int], bit: Int) = arr(bit / 32) |= (1 << (bit % 32))
+  def clrBit(arr: Array[Int], bit: Int) = arr(bit / 32) &= ~(1 << (bit % 32))
 
-  private def isOccupied(arr: Array[Int], idx: Int) = getBit(arr, idx*2)
-  private def setOccupied(arr: Array[Int], idx: Int) = setBit(arr, idx*2)
-  private def isDeleted(arr: Array[Int], idx: Int) = getBit(arr, idx*2+1)
-  private def setDeleted(arr: Array[Int], idx: Int) = setBit(arr, idx*2+1)
+  private def isOccupied(arr: Array[Int], idx: Int)    = getBit(arr, idx*2)
+  private def setOccupied(arr: Array[Int], idx: Int)   = setBit(arr, idx*2)
+  private def setUnoccupied(arr: Array[Int], idx: Int) = clrBit(arr, idx*2)
+  private def isDeleted(arr: Array[Int], idx: Int)     = getBit(arr, idx*2+1)
+  private def setDeleted(arr: Array[Int], idx: Int)    = setBit(arr, idx*2+1)
 
   private def grow(factor: Int): Unit = {
     val oldCap = capacity
