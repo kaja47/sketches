@@ -349,89 +349,137 @@ final class IntFreqMap(initialSize: Int = 32, loadFactor: Double = 0.3, freqThre
 }
 
 
-class TopKFloatInt(k: Int) {
-  private val heap = new MinFloatIntHeap(k+1)
-  private var min = Float.NegativeInfinity
+class TopKFloatInt(k: Int, distinct: Boolean = false) extends BaseMinFloatIntHeap(k) {
+//  private var valueSet: IntSet = if (distinct) new IntSet() else null
+  protected var min = Float.NegativeInfinity
 
-  def insert(key: Float, value: Int) = {
-    if (heap.size < k) {
-      heap.insert(key, value)
+  /** returns value that was deleted or Int.MinValue */
+  def insert(key: Float, value: Int): Unit = {
+    if (size < k) {
+      if (!distinct || !_containsValue(value)) {
+        _insertFloat(key, value)
+        min = _minKeyFloat
+//        if (distinct) {
+//          valueSet += value
+//        }
+      }
 
-    } else if (key >= min) {
-      heap.insert(key, value)
-      heap.deleteMin()
-      min = heap.minKey
+    } else if (key > min) {
+      if (!distinct || !_containsValue(value)) {
+        _deleteMinAndInsertFloat(key, value)
+        min = _minKeyFloat
+//        if (distinct) {
+//          valueSet -= _minValue
+//          valueSet += value
+//        }
+      }
+
     }
   }
 
-  def values = {
-    val res = new Array[Int](heap.size)
+  protected def _containsValue(value: Int): Boolean = {
+    var i = 0 ; while (i < top) {
+      if (low(arr(i)) == value) return true
+      i += 1
+    }
+    false
+  }
+
+  def += (key: Float, value: Int) = insert(key, value)
+
+  def ++= (tk: TopKFloatInt) {
+    // backwrds iterations because that way heap is filled by big values and
+    // rest is filered out by `key > min` condition in the insert method
+    var i = tk.top - 1; while (i >= 1) {
+      val key = Bits.sortableIntToFloat(high(tk.arr(i)))
+      val value = low(tk.arr(i))
+      insert(key, value)
+      i -= 1
+    }
+  }
+
+  /** Return the content (the value part of key-value pair) of this heap sorted
+    * by the key part. */
+  def drainToArray() = {
+    val res = new Array[Int](size)
     var i = res.length-1 ; while (i >= 0) {
-      res(i) = heap.minValue
-      heap.deleteMin()
+      res(i) = _minValue
+      deleteMin()
       i -= 1
     }
     res
   }
+
+  def head: Int = _minValue
+
+  override def toString = arr.drop(1).take(size).map(l => (Bits.sortableIntToFloat(high(l)), low(l))).mkString("TopKFloatInt(", ",", ")")
 }
 
-class MinFloatIntHeap(val capacity: Int) {
-  private val heap = new MinIntIntHeap(capacity)
+class MinFloatIntHeap(capacity: Int) extends BaseMinFloatIntHeap(capacity) {
+  def insert(key: Float, value: Int) = _insertFloat(key, value)
+  def minKey: Float = _minKeyFloat
+  def minValue: Int = _minValue
+  def deleteMinAndInsert(key: Float, value: Int) = _deleteMinAndInsertFloat(key, value)
+}
 
-  def size = heap.size
-  def isEmpty = heap.isEmpty
-  def nonEmpty = heap.nonEmpty
-
-  def insert(key: Float, value: Int) = heap.insert(Bits.floatToSortableInt(key), value)
-  def minKey: Float = Bits.sortableIntToFloat(heap.minKey)
-  def minValue: Int = heap.minValue
-  def deleteMin(): Unit = heap.deleteMin()
+abstract class BaseMinFloatIntHeap(capacity: Int) extends BaseMinIntIntHeap(capacity) {
+  def _insertFloat(key: Float, value: Int) = _insert(Bits.floatToSortableInt(key), value)
+  def _minKeyFloat: Float = Bits.sortableIntToFloat(_minKey)
+  def _deleteMinAndInsertFloat(key: Float, value: Int) = _deleteMinAndInsert(Bits.floatToSortableInt(key), value)
 }
 
 
-class MinIntIntHeap(val capacity: Int) {
+class MinIntIntHeap(capacity: Int) extends BaseMinIntIntHeap(capacity) {
+  def insert(key: Int, value: Int) = _insert(key, value)
+  def minKey: Int = _minKey
+  def minValue: Int = _minValue
+  def deleteMinAndInsert(key: Int, value: Int) = _deleteMinAndInsert(key, value)
+}
 
-  // both key and index are packed inside one Long value
-  // key which is used for comparison forms high 4 bytes of Long
-  private val arr = new Array[Long](capacity+2)
-  private var head = 0+1
+abstract class BaseMinIntIntHeap(val capacity: Int) {
 
-  def size = head-1
-  def isEmpty = head == (0+1)
-  def nonEmpty = head != (0+1)
+  // Both key and index are packed inside one Long value.
+  // Key which is used for comparison forms high 4 bytes of said Long.
+  protected val arr = new Array[Long](capacity)
+  // top points behind the last element
+  protected var top = 0
 
-  def insert(key: Int, value: Int): Unit = {
-    arr(head) = pack(key, value)
-    swim(head)
-    head += 1
+  def size = top
+  def isEmpty = top == (0)
+  def nonEmpty = top != (0)
+
+  protected def _insert(key: Int, value: Int): Unit = {
+    arr(top) = pack(key, value)
+    swim(top)
+    top += 1
   }
 
-  def minKey: Int = high(arr(0+1))
-  def minValue: Int = low(arr(0+1))
+  protected def _minKey: Int = high(arr(0))
+  protected def _minValue: Int = low(arr(0))
 
   def deleteMin(): Unit = {
-    if (head == 0+1) throw new NoSuchElementException("underflow")
-    //val minKey = high(arr(0+1))
-    head -= 1
-    swap(0+1, head)
-    arr(head) = 0
-    sink(0+1)
+    if (top == 0) throw new NoSuchElementException("underflow")
+    //val minKey = high(arr(0))
+    top -= 1
+    swap(0, top)
+    arr(top) = 0
+    sink(0)
   }
 
   /** This method is equivalent to deleteMin() followed by insert(), but it's
     * more efficient. */
-  def deleteMinAndInsert(key: Int, value: Int): Unit = {
+  protected def _deleteMinAndInsert(key: Int, value: Int): Unit = {
     //deleteMin()
     //insert(key, value)
-    if (head == 0+1) throw new NoSuchElementException("underflow")
-    arr(0+1) = pack(key, value)
-    sink(0+1)
+    if (top == 0) throw new NoSuchElementException("underflow")
+    arr(0) = pack(key, value)
+    sink(0)
   }
 
 
-  private def pack(hi: Int, lo: Int): Long = hi.toLong << 32 | lo
-  private def high(x: Long): Int = (x >>> 32).toInt
-  private def low(x: Long): Int = x.toInt
+  protected def pack(hi: Int, lo: Int): Long = hi.toLong << 32 | lo
+  protected def high(x: Long): Int = (x >>> 32).toInt
+  protected def low(x: Long): Int = x.toInt
 
   private def swap(a: Int, b: Int) = {
     val tmp = arr(a)
@@ -439,15 +487,13 @@ class MinIntIntHeap(val capacity: Int) {
     arr(b) = tmp
   }
 
-  //private def parent(pos: Int) = (pos + 1) / 2 - 1
-  //private def child(pos: Int) = pos * 2 + 1
-  private def parent(pos: Int) = pos / 2
-  private def child(pos: Int) = pos * 2
+  private def parent(pos: Int) = (pos - 1) / 2
+  private def child(pos: Int) = pos * 2 + 1
 
   // moves value at the given position up towards the root
   private def swim(_pos: Int): Unit = {
     var pos = _pos
-    while (pos > 0+1 && arr(parent(pos)) > arr(pos)) {
+    while (pos > 0 && arr(parent(pos)) > arr(pos)) {
       swap(parent(pos), pos)
       pos = parent(pos)
     }
@@ -455,15 +501,21 @@ class MinIntIntHeap(val capacity: Int) {
 
   // moves value at the given position down towards leaves
   private def sink(_pos: Int): Unit = {
+    val key = arr(_pos)
     var pos = _pos
-    while (child(pos) < head) {
+    while (child(pos) < top) {
       var ch = child(pos)
-      //if (ch < (head - 1) && arr(ch) > arr(ch+1)) ch += 1
-      ch += (((ch.toLong - (head - 1)) & (arr(ch+1) - arr(ch))) >>> 63).toInt
-      if (arr(pos) <= arr(ch)) return
-      swap(pos, ch)
+      if (ch < (top - 1) && arr(ch) > arr(ch+1)) ch += 1
+//      if (arr(pos) <= arr(ch)) return
+      if (key <= arr(ch)) {
+        arr(pos) = key
+        return
+      }
+//      swap(pos, ch)
+      arr(pos) = arr(ch)
       pos = ch
     }
+    arr(pos) = key
   }
 
 }
