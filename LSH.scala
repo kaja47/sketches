@@ -6,7 +6,8 @@ import java.lang.Long.{ bitCount, rotateLeft }
 import java.util.Arrays
 import scala.util.hashing.MurmurHash3
 import scala.collection.{ mutable, GenSeq }
-
+import scala.collection.mutable.ArrayBuilder
+import math.{ pow, log }
 
 
 case class LSHBuildCfg(
@@ -62,6 +63,24 @@ case class Sim(a: Int, b: Int, estimatedSimilatity: Double, similarity: Double)
 
 
 object LSH {
+
+  def pickBands(threshold: Double, hashes: Int) = {
+    require(threshold > 0.0)
+    val target = hashes * -1 * log(threshold)
+    var bands = 1
+    while (bands * log(bands) < target) {
+      bands += 1
+    }
+    bands
+  }
+
+  /** Picks best number of sketch hashes and LSH bands for given similarity
+    * threshold */
+  def pickHashesAndBands(threshold: Double, maxHashes: Int) = {
+    val bands = pickBands(threshold, maxHashes)
+    val hashes = (maxHashes / bands) * bands
+    (hashes, bands)
+  }
 
 
   // === BitLSH =================
@@ -254,6 +273,18 @@ abstract class LSH { self =>
   protected def getSketchArray: SketchArray = if (sketch != null) sketch.sketchArray else null.asInstanceOf[SketchArray]
 
   def withConfig(cfg: LSHCfg): LSH
+
+  def probabilityOfInclusion(sim: Double) = {
+    val bandLen = estimator.sketchLength / bands
+    1.0 - pow(1.0 - pow(sim, bandLen), bands)
+  }
+
+  val estimatedThreshold = {
+    val bandLen = estimator.sketchLength / bands
+    pow(1.0 / bands, 1.0 / bandLen)
+  }
+
+  // =====
 
   def rawStream: Iterator[(Idxs, SketchArray)]
   def rawStreamIndexes: Iterator[Idxs]
