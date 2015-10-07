@@ -14,6 +14,11 @@ case class LSHBuildCfg(
   /** every bucket that has more than this number of elements is discarded */
   maxBucketSize: Int = Int.MaxValue,
 
+  /** Every bucket that has less than this number of elements is discarded. It
+    * might have sense to set this to 2 for closed datasets. It also filters
+    * out a lot of tiny arrays which reduce memory usage. */
+  minBucketSize: Int = 1,
+
   /** Determine how many bands are computed during one pass over data.
     * Multiple band groups can be execute in parallel.
     *
@@ -133,7 +138,9 @@ object LSH {
 
       bandMap.getAll foreach { case (h, is) =>
         require(fastSparse.isDistinctIncreasingArray(is))
-        idxs(bandGroup * bandSize * cfg.bandsInOnePass + h) = is
+        if (is.length <= cfg.maxBucketSize && is.length >= cfg.minBucketSize) {
+          idxs(bandGroup * bandSize * cfg.bandsInOnePass + h) = is
+        }
       }
     }
 
@@ -207,7 +214,9 @@ object LSH {
 
       bandMap.getAll foreach { case (h, is) =>
         require(fastSparse.isDistinctIncreasingArray(is))
-        idxs(bandGroup * bandSize * cfg.bandsInOnePass + h) = is
+        if (is.length <= cfg.maxBucketSize && is.length >= cfg.minBucketSize) {
+          idxs(bandGroup * bandSize * cfg.bandsInOnePass + h) = is
+        }
       }
     }
 
