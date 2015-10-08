@@ -390,13 +390,11 @@ abstract class LSH { self =>
     similarIndexes(getSketchArray, idx, minEst, 0.0, null)
 
   // Following methods need valid sketch object
-  def similarItems(sketch: SketchArray, idx: Int, minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] = {
-    // Estimates and similarities are recomputed once more for similar items.
-    val simIdxs = similarIndexes(sketch, idx, minEst, minSim, f)
-    if (minEst == Double.NegativeInfinity) {
-      indexesToSimsNoEstimate(idx, simIdxs, f)
-    } else {
-      indexesToSims(idx, simIdxs, f, sketch)
+  def similarItems = new Query[Iterator[Sim]] {
+    def apply(sketch: SketchArray, idx: Int, minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] = {
+      // Estimates and similarities are recomputed once more for similar items.
+      val simIdxs = similarIndexes(sketch, idx, minEst, minSim, f)
+      indexesToSims(idx, simIdxs, f, sketch, minEst == Double.NegativeInfinity)
     }
   }
   def similarItems(sketch: SketchArray, idx: Int, minEst: Double): Iterator[Sim] =
@@ -415,16 +413,6 @@ abstract class LSH { self =>
     * data have better cache locality. */
   protected def _allSimilarIndexes_notCompact(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, Idxs)] = {
     val res = Array.fill(length)(newIndexResultBuilder(distinct = true))
-
-    def min(idxs: Idxs) = {
-      var m = Int.MaxValue
-      var i = 0
-      while (i < idxs.length) {
-        m = math.min(idxs(i), m)
-        i += 1
-      }
-      m
-    }
 
     if (minEst == Double.NegativeInfinity) {
       val comparisons = streamIndexes.map { idxs => (idxs.length - 1) * idxs.length / 2 } sum
@@ -514,11 +502,8 @@ abstract class LSH { self =>
   protected def _allSimilarItems_notCompact(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, Iterator[Sim])] = {
     // Estimates and similarities are recomputed once more for similar items.
     val iter = _allSimilarIndexes_notCompact(minEst, minSim, f)
-    if (minEst == Double.NegativeInfinity) {
-      iter map { case (idx, simIdxs) => (idx, indexesToSimsNoEstimate(idx, simIdxs, f)) }
-    } else {
-      iter map { case (idx, simIdxs) => (idx, indexesToSims(idx, simIdxs, f, getSketchArray)) }
-    }
+    val noEstimates = minEst == Double.NegativeInfinity
+    iter map { case (idx, simIdxs) => (idx, indexesToSims(idx, simIdxs, f, getSketchArray, noEstimates)) }
   }
 
   def allSimilarIndexes(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, Idxs)] =
@@ -535,7 +520,7 @@ abstract class LSH { self =>
 
   def rawSimilarItemsStream(minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] = {
     if (minEst == Double.NegativeInfinity) {
-      (for (idxs <- rawStreamIndexes) yield {
+      rawStreamIndexes flatMap { idxs =>
         val res = collection.mutable.ArrayBuffer[Sim]()
         var i = 0 ; while (i < idxs.length) {
           var j = i+1 ; while (j < idxs.length) {
@@ -548,12 +533,12 @@ abstract class LSH { self =>
           i += 1
         }
         res
-      }).flatten
+      }
 
     } else {
       val minBits = sketch.minSameBits(minEst)
       val skarr = getSketchArray
-      (for (idxs <- rawStreamIndexes) yield {
+      rawStreamIndexes flatMap { idxs =>
         val res = collection.mutable.ArrayBuffer[Sim]()
         var i = 0 ; while (i < idxs.length) {
           var j = i+1 ; while (j < idxs.length) {
@@ -569,7 +554,7 @@ abstract class LSH { self =>
           i += 1
         }
         res
-      }).flatten
+      }
     }
   }
   def rawSimilarItemsStream(minEst: Double): Iterator[Sim] = rawSimilarItemsStream(minEst, 0.0, null)
@@ -592,14 +577,19 @@ abstract class LSH { self =>
     }
   }
 
-  def newIndexResultBuilder(distinct: Boolean = false): IndexResultBuilder =
+  protected def newIndexResultBuilder(distinct: Boolean = false): IndexResultBuilder =
     IndexResultBuilder.make(distinct, cfg.maxResults)
 
-  protected def indexesToSimsNoEstimate(idx: Int, simIdxs: Idxs, f: SimFun) =
-    simIdxs.iterator.map { simIdx => Sim(idx, simIdx, 0.0, f(idx, simIdx)) }
-
-  protected def indexesToSims(idx: Int, simIdxs: Idxs, f: SimFun, sketch: SketchArray) =
-    simIdxs.iterator.map { simIdx => Sim(idx, simIdx, estimator.estimateSimilarity(sketch, idx, sketch, simIdx), f(idx, simIdx)) }
+  protected def indexesToSims(idx: Int, simIdxs: Idxs, f: SimFun, sketch: SketchArray, noEstimates: Boolean) =
+    if (noEstimates) {
+      simIdxs.iterator.map { simIdx => Sim(idx, simIdx, 0.0, f(idx, simIdx)) }
+    } else {
+      simIdxs.iterator.map { simIdx =>
+        val est = estimator.estimateSimilarity(sketch, idx, sketch, simIdx)
+        val sim = if (f == null) est else f(idx, simIdx)
+        Sim(idx, simIdx, est, sim)
+      }
+    }
 
 }
 
