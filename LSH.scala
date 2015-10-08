@@ -4,6 +4,7 @@ import atrox.{ fastSparse, IntFreqMap, Bits }
 import java.lang.System.arraycopy
 import java.lang.Long.{ bitCount, rotateLeft }
 import java.util.Arrays
+import java.util.concurrent.{ CopyOnWriteArrayList, ThreadLocalRandom }
 import scala.util.hashing.MurmurHash3
 import scala.collection.{ mutable, GenSeq }
 import scala.collection.mutable.ArrayBuilder
@@ -290,6 +291,20 @@ abstract class LSH { self =>
     pow(1.0 / bands, 1.0 / bandLen)
   }
 
+  trait Query[Res] {
+    def apply(sketch: SketchArray, idx: Int, minEst: Double, minSim: Double, f: SimFun): Res
+    def apply(sketch: SketchArray, idx: Int, minEst: Double): Res =
+      apply(sketch, idx, minEst, 0.0, null)
+    def apply(sketch: Sketching, idx: Int, minEst: Double): Res =
+      apply(sketch.getSketchFragment(idx), 0, minEst, 0.0, null)
+    def apply(sketch: Sketching, idx: Int, minEst: Double, minSim: Double, f: SimFun): Res =
+      apply(sketch.getSketchFragment(idx), 0, minEst, minSim, f)
+    def apply(idx: Int, minEst: Double, minSim: Double, f: SimFun): Res =
+      apply(getSketchArray, idx, minEst, minSim, f)
+    def apply(idx: Int, minEst: Double): Res =
+      apply(getSketchArray, idx, minEst, 0.0, null)
+  }
+
   // =====
 
   def rawStream: Iterator[(Idxs, SketchArray)]
@@ -312,82 +327,66 @@ abstract class LSH { self =>
   // Following methods need valid sketch object.
   // If minEst is set to Double.NegativeInfinity, no estimates are computed.
   // Instead candidates are directly filtered through similarity function.
-  def rawSimilarIndexes(sketch: SketchArray, idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs = {
-    val res = new ArrayBuilder.ofInt
+  val rawSimilarIndexes = new Query[Idxs] {
+    def apply(sketch: SketchArray, idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs = {
+      val res = new ArrayBuilder.ofInt
 
-    if (minEst == Double.NegativeInfinity) {
-      for (idxs <- rawCandidateIndexes(sketch, idx)) {
-        var i = 0 ; while (i < idxs.length) {
-          if (f(idxs(i), idx) >= minSim) { res += idxs(i) }
-          i += 1
+      if (isNegInf(minEst)) {
+        for (idxs <- rawCandidateIndexes(sketch, idx)) {
+          var i = 0 ; while (i < idxs.length) {
+            if (f(idxs(i), idx) >= minSim) { res += idxs(i) }
+            i += 1
+          }
         }
+
+      } else {
+        val minBits = estimator.minSameBits(minEst)
+        for (idxs <- rawCandidateIndexes(sketch, idx)) {
+          var i = 0 ; while (i < idxs.length) {
+            val bits = estimator.sameBits(sketch, idxs(i), sketch, idx)
+            if (bits >= minBits && (f == null || f(idxs(i), idx) >= minSim)) { res += idxs(i) }
+            i += 1
+          }
+        }
+
       }
 
-    } else {
-      val minBits = estimator.minSameBits(minEst)
-      for (idxs <- rawCandidateIndexes(sketch, idx)) {
-        var i = 0 ; while (i < idxs.length) {
-          val bits = estimator.sameBits(sketch, idxs(i), sketch, idx)
-          if (bits >= minBits && (f == null || f(idxs(i), idx) >= minSim)) { res += idxs(i) }
-          i += 1
-        }
-      }
-
+      res.result
     }
-
-    res.result
   }
-  def rawSimilarIndexes(sketch: SketchArray, idx: Int, minEst: Double): Idxs =
-    rawSimilarIndexes(sketch, idx, minEst, 0.0, null)
-  def rawSimilarIndexes(sketch: Sketching, idx: Int, minEst: Double): Idxs =
-    rawSimilarIndexes(sketch.getSketchFragment(idx), 0, minEst, 0.0, null)
-  def rawSimilarIndexes(sketch: Sketching, idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs =
-    rawSimilarIndexes(sketch.getSketchFragment(idx), 0, minEst, minSim, f)
-  def rawSimilarIndexes(idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs =
-    rawSimilarIndexes(getSketchArray, idx, minEst, minSim, f)
-  def rawSimilarIndexes(idx: Int, minEst: Double): Idxs =
-    rawSimilarIndexes(getSketchArray, idx, minEst, 0.0, null)
 
   // Following methods need valid sketch object
   // similarIndexes().toSet == (rawSimilarIndexes().distinct.toSet - idx)
-  def similarIndexes(sketch: SketchArray, idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs = {
-    val candidates = selectCandidates(idx)
-    val res = newIndexResultBuilder()
+  def similarIndexes = new Query[Idxs] {
+    def apply(sketch: SketchArray, idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs = {
+      val candidates = selectCandidates(idx)
+      val res = newIndexResultBuilder()
 
-    if (minEst == Double.NegativeInfinity) {
-      // TODO: require(f != null)
-      var i = 0 ; while (i < candidates.length) {
-        var sim = 0.0
-        if (idx != candidates(i) && { sim = f(candidates(i), idx) ; sim >= minSim }) {
-          res += (candidates(i), sim)
+      if (isNegInf(minEst)) {
+        // TODO: require(f != null)
+        var i = 0 ; while (i < candidates.length) {
+          var sim = 0.0
+          if (idx != candidates(i) && { sim = f(candidates(i), idx) ; sim >= minSim }) {
+            res += (candidates(i), sim)
+          }
+          i += 1
         }
-        i += 1
+
+      } else {
+        val minBits = estimator.minSameBits(minEst)
+        var i = 0 ; while (i < candidates.length) {
+          val bits = estimator.sameBits(sketch, candidates(i), sketch, idx)
+          var sim = 0.0
+          if (bits >= minBits && idx != candidates(i) && (f == null || { sim = f(candidates(i), idx) ; sim >= minSim })) {
+            res += (candidates(i), if (f == null) estimator.estimateSimilarity(bits) else sim)
+          }
+          i += 1
+        }
       }
 
-    } else {
-      val minBits = estimator.minSameBits(minEst)
-      var i = 0 ; while (i < candidates.length) {
-        val bits = estimator.sameBits(sketch, candidates(i), sketch, idx)
-        var sim = 0.0
-        if (bits >= minBits && idx != candidates(i) && (f == null || { sim = f(candidates(i), idx) ; sim >= minSim })) {
-          res += (candidates(i), if (f == null) estimator.estimateSimilarity(bits) else sim)
-        }
-        i += 1
-      }
+      res.result
     }
-
-    res.result
   }
-  def similarIndexes(sketch: SketchArray, idx: Int, minEst: Double): Idxs =
-    similarIndexes(sketch, idx, minEst, 0.0, null)
-  def similarIndexes(sketch: Sketching, idx: Int, minEst: Double): Idxs =
-    similarIndexes(sketch.getSketchFragment(idx), 0, minEst, 0.0, null)
-  def similarIndexes(sketch: Sketching, idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs =
-    similarIndexes(sketch.getSketchFragment(idx), 0, minEst, minSim, f)
-  def similarIndexes(idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs =
-    similarIndexes(getSketchArray, idx, minEst, minSim, f)
-  def similarIndexes(idx: Int, minEst: Double): Idxs =
-    similarIndexes(getSketchArray, idx, minEst, 0.0, null)
 
   // Following methods need valid sketch object
   def similarItems = new Query[Iterator[Sim]] {
@@ -397,16 +396,6 @@ abstract class LSH { self =>
       indexesToSims(idx, simIdxs, f, sketch, minEst == Double.NegativeInfinity)
     }
   }
-  def similarItems(sketch: SketchArray, idx: Int, minEst: Double): Iterator[Sim] =
-    similarItems(sketch, idx, minEst, 0.0, null)
-  def similarItems(sketch: Sketching, idx: Int, minEst: Double): Iterator[Sim] =
-    similarItems(sketch.getSketchFragment(idx), 0, minEst, 0.0, null)
-  def similarItems(sketch: Sketching, idx: Int, minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] =
-    similarItems(sketch.getSketchFragment(idx), 0, minEst, minSim, f)
-  def similarItems(idx: Int, minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] =
-    similarItems(getSketchArray, idx, minEst, minSim, f)
-  def similarItems(idx: Int, minEst: Double): Iterator[Sim] =
-    similarItems(getSketchArray, idx, minEst, 0.0, null)
 
   /** Needs to store all similar indexes in memory + some overhead, but it's
     * much faster, because it needs to do only half of iterations and accessed
@@ -590,6 +579,8 @@ abstract class LSH { self =>
         Sim(idx, simIdx, est, sim)
       }
     }
+
+    def isNegInf(d: Double) = d == Double.NegativeInfinity
 
 }
 
