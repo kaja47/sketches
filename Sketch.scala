@@ -27,6 +27,14 @@ trait Sketching[SketchArray] {
 }
 
 
+case class SketchCfg (
+  maxResults: Int = Int.MaxValue,
+  orderByEstimate: Boolean = false,
+  compact: Boolean = true,
+  parallel: Boolean = false
+)
+
+
 trait Sketch[SketchArray] extends Serializable {
 
   type Idxs = Array[Int]
@@ -35,7 +43,10 @@ trait Sketch[SketchArray] extends Serializable {
   def sketchArray: SketchArray
   def length: Int
 
+  def withConfig(cfg: SketchCfg): Sketch[SketchArray]
+
   def estimator: Estimator[SketchArray]
+  def cfg: SketchCfg
   def sameBits(idxA: Int, idxB: Int): Int
   def estimateSimilarity(idxA: Int, idxB: Int): Double = estimator.estimateSimilarity(sameBits(idxA, idxB))
   def minSameBits(sim: Double): Int = estimator.minSameBits(sim)
@@ -70,67 +81,115 @@ trait Sketch[SketchArray] extends Serializable {
     res.iterator
   }
 
-  def allSimilarIndexes(minEst: Double, minSim: Double, f: SimFun, compact: Boolean = true): Iterator[(Int, Idxs)] = {
+  def allSimilarIndexes(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, Idxs)] = {
     val minBits = estimator.minSameBits(minEst)
 
-    // this needs in the worst case O(n * s / 4) extra memory, where n is the
+    // this needs in the worst case O(n * s / 4) additional space, where n is the
     // number of items in this sketch and s is average number of similar
     // indexes
-    if (!compact) {
-      val res = Array.fill(length)(new collection.mutable.ArrayBuilder.ofInt)
-      Iterator.tabulate(length) { i =>
-        var j = i+1 ; while (j < length) {
-          val bits = sameBits(i, j)
-          if (bits >= minBits && i != j && (f == null || f(i, j) >= minSim)) {
-            res(i) += j
-            res(j) += i
+    if (!cfg.compact && !cfg.parallel) {
+      val stripeSize = 64
+      val res = Array.fill(length)(newIndexResultBuilder)
+
+      Iterator.range(0, length, step = stripeSize) flatMap { start =>
+
+        stripeRun(stripeSize, start, length, minBits, minSim, f, true, new Op {
+          def apply(i: Int, j: Int, est: Double, sim: Double): Unit = {
+            res(i) += (j, sim)
+            res(j) += (i, sim)
           }
-          j += 1
-        }
-        val arr = res(i).result
-        res(i) = null
-        (i, arr)
+        })
+
+        val endi = math.min(start + stripeSize, length)
+        Iterator.range(start, endi) map { i =>
+          val arr = res(i).result
+          res(i) = null
+          (i, arr)
+        } filter { _._2.nonEmpty }
       }
 
     // this needs no additional memory but it have to do full n**2 iterations
     } else {
-      Iterator.tabulate(length) { idx => (idx, similarIndexes(idx, minEst, minSim, f)) }
+      //Iterator.tabulate(length) { idx => (idx, similarIndexes(idx, minEst, minSim, f)) }
+
+      val stripeSize = 64
+      val stripesInParallel = if (cfg.parallel) 16 else 1
+      println(s"copmact, stripesInParallel $stripesInParallel")
+
+      Iterator.range(0, length, step = stripeSize * stripesInParallel) flatMap { pti =>
+        val res = Array.fill(stripeSize * stripesInParallel)(newIndexResultBuilder)
+
+        parStripes(stripesInParallel, stripeSize, pti, length) { start =>
+          stripeRun(stripeSize, start, length, minBits, minSim, f, false, new Op {
+            def apply(i: Int, j: Int, est: Double, sim: Double): Unit = {
+              res(i-pti) += (j, sim)
+            }
+          })
+        }
+
+        Iterator.tabulate(res.length) { i => (i + pti, res(i).result) } filter { _._2.nonEmpty }
+      }
+
     }
   }
   def allSimilarIndexes(minEst: Double): Iterator[(Int, Idxs)] =
     allSimilarIndexes(minEst, 0.0, null)
 
-
-  def allSimilarItems(minEst: Double, minSim: Double, f: SimFun, compact: Boolean = false): Iterator[(Int, Iterator[Sim])] = {
-    val minBits = estimator.minSameBits(minEst)
-
-    if (!compact) {
-      val res = Array.fill(length)(new collection.mutable.ArrayBuilder.ofRef[Sim])
-      Iterator.tabulate(length) { i =>
-        var j = i+1 ; while (j < length) {
-          val bits = sameBits(i, j)
-          var sim: Double = 0.0
-          if (bits >= minBits && i != j && (f == null || { sim = f(i, j) ; sim >= minSim })) {
-            val est = estimator.estimateSimilarity(bits)
-            res(i) += Sim(i, j, est, sim)
-            res(j) += Sim(j, i, est, sim)
-          }
-          j += 1
-        }
-        val arr = res(i).result
-        res(i) = null
-        (i, arr.iterator)
-      }
-
-    } else {
-      Iterator.tabulate(length) { idx => (idx, similarItems(idx, minEst, minSim, f)) }
-    }
+  def allSimilarItems(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, Iterator[Sim])] = {
+    val ff = if (cfg.orderByEstimate) null else f
+    allSimilarIndexes(minEst, minSim, ff) map { case (idx, simIdxs) => (idx, indexesToSims(idx, simIdxs, f, sketchArray)) }
   }
   def allSimilarItems(minEst: Double): Iterator[(Int, Iterator[Sim])] =
     allSimilarItems(minEst, 0.0, null)
+
+  // === internal cruft ===
+
+  protected def parStripes(stripesInParallel: Int, stripeSize: Int, base: Int, length: Int)(f: (Int) => Unit): Unit = {
+    if (stripesInParallel > 1) {
+      val end = math.min(base + stripeSize * stripesInParallel, length)
+      (base until end by stripeSize).par foreach { b =>
+        f(b)
+      }
+    } else {
+      f(base)
+    }
+  }
+
+  // striping/tiling leads to better cache usage patterns and that subsequently leads to better performance
+  protected def stripeRun(stripeSize: Int, stripeBase: Int, length: Int, minBits: Int, minSim: Double, f: SimFun, half: Boolean, op: Op): Unit = {
+    val endi = math.min(stripeBase + stripeSize, length)
+    val startj = if (!half) 0 else stripeBase + 1
+
+    var j = startj ; while (j < length) {
+      val realendi = if (!half) endi else math.min(j, endi)
+      var i = stripeBase ; while (i < realendi) {
+        val bits = sameBits(i, j)
+        var sim = 0.0
+        if (bits >= minBits && i != j && (f == null || { sim = f(i, j) ; sim >= minSim })) {
+          val est = estimator.estimateSimilarity(bits)
+          op.apply(i, j, est, if (f == null) est else sim)
+        }
+        i += 1
+      }
+      j += 1
+    }
+  }
+
+  protected abstract class Op { def apply(thisIdx: Int, thatIdx: Int, est: Double, sim: Double): Unit }
+
+  protected def newIndexResultBuilder: IndexResultBuilder =
+    IndexResultBuilder.make(false, cfg.maxResults)
+
+  protected def indexesToSims(idx: Int, simIdxs: Idxs, f: SimFun, sketch: SketchArray) =
+    simIdxs.iterator.map { simIdx =>
+      val est = estimator.estimateSimilarity(sketch, idx, sketch, simIdx)
+      Sim(idx, simIdx, est, if (f == null) est else f(idx, simIdx))
+    }
 }
 
 trait Estimator[SketchArray] {
+  def sketchLength: Int
+
   def minSameBits(sim: Double): Int
   def estimateSimilarity(sameBits: Int): Double
 
@@ -265,10 +324,13 @@ object IntSketch {
 case class IntSketch(
   sketchArray: Array[Int],
   sketchLength: Int,
-  estimator: IntEstimator
+  estimator: IntEstimator,
+  cfg: SketchCfg = SketchCfg()
 ) extends Sketch[Array[Int]] with IntSketching {
 
   val length = sketchArray.length / sketchLength
+
+  def withConfig(_cfg: SketchCfg): IntSketch = copy(cfg = _cfg)
 
   def sameBits(idxA: Int, idxB: Int): Int =
     estimator.sameBits(sketchArray, idxA, sketchArray, idxB)
@@ -333,6 +395,17 @@ trait BitEstimator128 extends BitEstimator {
     var same = 128
     same -= bitCount(arrA(idxA*2)   ^ arrB(idxB*2))
     same -= bitCount(arrA(idxA*2+1) ^ arrB(idxB*2+1))
+    same
+  }
+}
+
+trait BitEstimator256 extends BitEstimator {
+  override def sameBits(arrA: Array[Long], idxA: Int, arrB: Array[Long], idxB: Int): Int = {
+    var same = 256
+    same -= bitCount(arrA(idxA*4)   ^ arrB(idxB*4))
+    same -= bitCount(arrA(idxA*4+1) ^ arrB(idxB*4+1))
+    same -= bitCount(arrA(idxA*4+2) ^ arrB(idxB*4+2))
+    same -= bitCount(arrA(idxA*4+3) ^ arrB(idxB*4+3))
     same
   }
 }
@@ -444,11 +517,14 @@ object BitSketch {
 case class BitSketch(
   sketchArray: Array[Long],
   sketchLength: Int,
-  estimator: BitEstimator
+  estimator: BitEstimator,
+  cfg: SketchCfg = SketchCfg()
 ) extends Sketch[Array[Long]] with BitSketching {
 
   def length = sketchArray.length * 64 / sketchLength
   def bitsPerSketch = sketchLength
+
+  def withConfig(_cfg: SketchCfg): BitSketch = copy(cfg = _cfg)
 
   def sameBits(idxA: Int, idxB: Int): Int =
     estimator.sameBits(sketchArray, idxA, sketchArray, idxB)
