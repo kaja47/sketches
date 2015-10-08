@@ -58,7 +58,10 @@ case class LSHCfg(
 
   /** If this is set to false, some operations might use faster code, that
     * needs to store all similar items in memory */
-  compact: Boolean = true
+  compact: Boolean = true,
+
+  /** Perform bulk query in parallel? */
+  parallel: Boolean = false
 ) {
   def accept(idxs: Array[Int]) = idxs != null && idxs.length <= maxBucketSize
 }
@@ -147,7 +150,7 @@ object LSH {
     }
 
     val _sk = sk match { case sk: BitSketch => sk ; case _ => null }
-    new BitLSH(_sk, sk.estimator, LSHCfg(), idxs, sketches, sk.sketchLength, bands, bandBits, includeSketches)
+    new BitLSH(_sk, sk.estimator, LSHCfg(), idxs, sketches, sk.length, sk.sketchLength, bands, bandBits, includeSketches)
   }
 
 
@@ -223,7 +226,7 @@ object LSH {
     }
 
     val _sk = sk match { case sk: IntSketch => sk ; case _ => null }
-    new IntLSH(_sk, sk.estimator, LSHCfg(), idxs, sketches, sk.sketchLength, bands, bandElements, hashBits, includeSketches)
+    new IntLSH(_sk, sk.estimator, LSHCfg(), idxs, sketches, sk.length, sk.sketchLength, bands, bandElements, hashBits, includeSketches)
   }
 
   def hashSlice(sketchArray: Array[Int], sketchLength: Int, i: Int, band: Int, bandLength: Int, hashBits: Int) = {
@@ -253,7 +256,6 @@ object LSH {
 }
 
 
-
 /** LSH configuration
   *
   * LSH, full Sketch
@@ -263,8 +265,9 @@ object LSH {
   * LSH, empty Sketch, no embedded sketches
   *  - can only provide list of candidates, cannot estimate similarities
   *
-  * methods with raw prefix might return duplicates
-  * methods without raw prefix must never return duplicates and queried item itself
+  * - Methods with "raw" prefix might return duplicates and are not affected by
+  *   maxBucketSize, maxCandidates and maxResults config options.
+  * - Methods without "raw" prefix must never return duplicates and queried item itself
   *
   * idxs must be sorted
   */
@@ -276,6 +279,7 @@ abstract class LSH { self =>
   type SimFun = (Int, Int) => Double
 
   def sketch: Sketch
+  def length: Int
   def estimator: Estimator[SketchArray]
   def cfg: LSHCfg
   def bands: Int
@@ -299,6 +303,8 @@ abstract class LSH { self =>
 
   def rawStream: Iterator[(Idxs, SketchArray)]
   def rawStreamIndexes: Iterator[Idxs]
+  /** same as rawStreamIndexes, but arrays are limited by maxBucketSize */
+  def streamIndexes: Iterator[Idxs] = rawStreamIndexes filter cfg.accept
 
   def rawCandidates(sketch: SketchArray, idx: Int): Array[(Idxs, SketchArray)]
   def rawCandidates(sketch: Sketching, idx: Int): Array[(Idxs, SketchArray)] = rawCandidates(sketch.getSketchFragment(idx), 0)
@@ -316,7 +322,7 @@ abstract class LSH { self =>
   // If minEst is set to Double.NegativeInfinity, no estimates are computed.
   // Instead candidates are directly filtered through similarity function.
   def rawSimilarIndexes(sketch: SketchArray, idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs = {
-    val res = new collection.mutable.ArrayBuilder.ofInt
+    val res = new ArrayBuilder.ofInt
 
     if (minEst == Double.NegativeInfinity) {
       for (idxs <- rawCandidateIndexes(sketch, idx)) {
@@ -362,35 +368,38 @@ abstract class LSH { self =>
     rawSimilarIndexes(getSketchArray, idx, minEst, 0.0, null)
 
   // Following methods need valid sketch object or inline sketches
+  // similarIndexes().toSet == (rawSimilarIndexes().distinct.toSet - idx)
   def similarIndexes(sketch: SketchArray, idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs = {
-    if (includeSketches && getSketchArray == null) {
-      rawSimilarIndexes(sketch, idx, minEst, minSim, f).distinct // TODO filtering
-    } else {
+    val candidates = selectCandidates(idx)
+    val res = newIndexResultBuilder()
 
-      val candidates = selectCandidates(idx)
-      val res = new collection.mutable.ArrayBuilder.ofInt
-
-      if (minEst == Double.NegativeInfinity) {
-        var i = 0 ; while (i < candidates.length) {
-          if (idx != candidates(i) && f(candidates(i), idx) >= minSim) {
-            res += candidates(i)
-          }
-          i += 1
+    if (minEst == Double.NegativeInfinity) {
+      // TODO: require(f != null)
+      var i = 0 ; while (i < candidates.length) {
+        var sim = 0.0
+        if (idx != candidates(i) && { sim = f(candidates(i), idx) ; sim >= minSim }) {
+          res += (candidates(i), sim)
         }
-
-      } else {
-        val minBits = estimator.minSameBits(minEst)
-        var i = 0 ; while (i < candidates.length) {
-          val bits = estimator.sameBits(sketch, candidates(i), sketch, idx)
-          if (bits >= minBits && idx != candidates(i) && (f == null || f(candidates(i), idx) >= minSim)) {
-            res += candidates(i)
-          }
-          i += 1
-        }
+        i += 1
       }
 
-      res.result
+    } else if (includeSketches) {
+      rawSimilarIndexes(sketch, idx, minEst, minSim, f).distinct // TODO filtering
+      ???
+
+    } else {
+      val minBits = estimator.minSameBits(minEst)
+      var i = 0 ; while (i < candidates.length) {
+        val bits = estimator.sameBits(sketch, candidates(i), sketch, idx)
+        var sim = 0.0
+        if (bits >= minBits && idx != candidates(i) && (f == null || { sim = f(candidates(i), idx) ; sim >= minSim })) {
+          res += (candidates(i), if (f == null) estimator.estimateSimilarity(bits) else sim)
+        }
+        i += 1
+      }
     }
+
+    res.result
   }
   def similarIndexes(sketch: SketchArray, idx: Int, minEst: Double): Idxs =
     similarIndexes(sketch, idx, minEst, 0.0, null)
@@ -405,36 +414,14 @@ abstract class LSH { self =>
 
   // Following methods need valid sketch object or inline sketches
   def similarItems(sketch: SketchArray, idx: Int, minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] = {
-    if (includeSketches) {
-      rawSimilarIndexes(sketch, idx, minEst, minSim, f).distinct.iterator // TODO filtering
+    // Estimates and similarities are recomputed once more for similar items.
+    val simIdxs = similarIndexes(sketch, idx, minEst, minSim, f)
+    if (minEst == Double.NegativeInfinity) {
+      indexesToSimsNoEstimate(idx, simIdxs, f)
+    } else if (includeSketches) {
       ???
     } else {
-      val minBits = estimator.minSameBits(minEst)
-      val candidates = selectCandidates(idx)
-      val res = new collection.mutable.ArrayBuffer[Sim]
-
-      if (minEst == Double.NegativeInfinity) {
-        var i = 0 ; while (i < candidates.length) {
-          var sim: Double = 0.0
-          if (idx != candidates(i) && (f == null || { sim = f(candidates(i), idx) ; sim >= minSim })) {
-            res += Sim(candidates(i), idx, 0.0, sim)
-          }
-          i += 1
-        }
-      } else {
-        var i = 0 ; while (i < candidates.length) {
-          val bits = estimator.sameBits(sketch, candidates(i), sketch, idx)
-          if (bits >= minBits) {
-            var sim: Double = 0.0
-            if (idx != candidates(i) && (f == null || { sim = f(candidates(i), idx) ; sim >= minSim })) {
-              res += Sim(candidates(i), idx, estimator.estimateSimilarity(bits), sim)
-            }
-          }
-          i += 1
-        }
-      }
-
-      res.iterator
+      indexesToSims(idx, simIdxs, f, sketch)
     }
   }
   def similarItems(sketch: SketchArray, idx: Int, minEst: Double): Iterator[Sim] =
@@ -452,35 +439,93 @@ abstract class LSH { self =>
     * much faster, because it needs to do only half of iterations and accessed
     * data have better cache locality. */
   protected def _allSimilarIndexes_notCompact(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, Idxs)] = {
-    val minBits = sketch.minSameBits(minEst)
-    val skarr = getSketchArray
+    val res = Array.fill(length)(newIndexResultBuilder(distinct = true))
 
-    if (includeSketches) ???
-
-    val len = sketch.length
-    val res = Array.fill(len)(new collection.mutable.ArrayBuilder.ofInt)
+    def min(idxs: Idxs) = {
+      var m = Int.MaxValue
+      var i = 0
+      while (i < idxs.length) {
+        m = math.min(idxs(i), m)
+        i += 1
+      }
+      m
+    }
 
     if (minEst == Double.NegativeInfinity) {
-      for (idxs <- rawStreamIndexes) {
-        var i = 0 ; while (i < idxs.length) {
-          var j = i+1 ; while (j < idxs.length) {
-            if (f == null || f(idxs(i), idxs(j)) >= minSim) {
-              res(idxs(i)) += idxs(j)
-              res(idxs(j)) += idxs(i)
-            }
-            j += 1
+      val comparisons = streamIndexes.map { idxs => (idxs.length - 1) * idxs.length / 2 } sum
+      val ratio = 1.0 * length * cfg.maxCandidates / comparisons
+
+      if (cfg.parallel) {
+        val partialResults = new java.util.concurrent.CopyOnWriteArrayList[Array[IndexResultBuilder]]()
+        val tl = new ThreadLocal[Array[IndexResultBuilder]] {
+          override def initialValue = {
+            val res = Array.fill(length)(newIndexResultBuilder(distinct = true))
+            partialResults.add(res)
+            res
           }
-          i += 1
+        }
+
+        streamIndexes.grouped(1024).toVector.par.foreach { idxsgr =>
+          val local = tl.get
+          val rand = java.util.concurrent.ThreadLocalRandom.current()
+          idxsgr.foreach { (idxs: Idxs) =>
+
+            var i = 0 ; while (i < idxs.length) {
+              if (rand.nextDouble() < ratio) {
+              var j = i+1 ; while (j < idxs.length) {
+                var sim = 0.0
+                if ({ sim = f(idxs(i), idxs(j)) ; sim >= minSim }) {
+                  local(idxs(i)) += (idxs(j), sim)
+                  local(idxs(j)) += (idxs(i), sim)
+                }
+                j += 1
+              }
+              }
+              i += 1
+            }
+
+          }
+        }
+
+        partialResults.toArray(Array[Array[IndexResultBuilder]]()).par foreach { local =>
+          var i = 0 ; while (i < local.length) {
+            if (local(i) != null) { res(i).synchronized { res(i) ++= local(i) } }
+            i += 1
+          }
+        }
+
+      } else {
+        val rand = java.util.concurrent.ThreadLocalRandom.current()
+        for (idxs <- streamIndexes) {
+          var i = 0 ; while (i < idxs.length) {
+            if (rand.nextDouble() < ratio) {
+            var j = i+1 ; while (j < idxs.length) {
+              var sim = 0.0
+              if ({ sim = f(idxs(i), idxs(j)) ; sim >= minSim }) {
+                res(idxs(i)) += (idxs(j), sim)
+                res(idxs(j)) += (idxs(i), sim)
+              }
+              j += 1
+            }
+            }
+            i += 1
+          }
         }
       }
+    } else if (includeSketches) {
+      ???
     } else {
-      for (idxs <- rawStreamIndexes) {
+      val minBits = sketch.minSameBits(minEst)
+      val skarr = getSketchArray
+      for (idxs <- streamIndexes) {
         var i = 0 ; while (i < idxs.length) {
           var j = i+1 ; while (j < idxs.length) {
             val bits = estimator.sameBits(skarr, idxs(i), skarr, idxs(j))
-            if (bits >= minBits && (f == null || f(idxs(i), idxs(j)) >= minSim)) {
-              res(idxs(i)) += idxs(j)
-              res(idxs(j)) += idxs(i)
+            var sim = 0.0
+            if (bits >= minBits && (f == null || { sim = f(idxs(i), idxs(j)) ; sim >= minSim })) {
+              sim = if (f == null) estimator.estimateSimilarity(bits) else sim
+              res(idxs(i)) += (idxs(j), sim)
+              res(idxs(j)) += (idxs(i), sim)
             }
             j += 1
           }
@@ -489,19 +534,33 @@ abstract class LSH { self =>
       }
     }
 
-    Iterator.tabulate(len) { idx => (idx, res(idx).result.distinct) }
+    Iterator.tabulate(length) { idx => (idx, res(idx).result) }
+  }
+
+
+  protected def _allSimilarItems_notCompact(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, Iterator[Sim])] = {
+    // Estimates and similarities are recomputed once more for similar items.
+    val iter = _allSimilarIndexes_notCompact(minEst, minSim, f)
+    if (minEst == Double.NegativeInfinity) {
+      iter map { case (idx, simIdxs) => (idx, indexesToSimsNoEstimate(idx, simIdxs, f)) }
+    } else if (includeSketches) {
+      ???
+    } else {
+      iter map { case (idx, simIdxs) => (idx, indexesToSims(idx, simIdxs, f, getSketchArray)) }
+    }
   }
 
   def allSimilarIndexes(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, Idxs)] =
     if (cfg.compact) Iterator.tabulate(sketch.length) { idx => (idx, similarIndexes(idx, minEst, minSim, f)) }
     else             _allSimilarIndexes_notCompact(minEst, minSim, f)
   def allSimilarIndexes(minEst: Double): Iterator[(Int, Idxs)] =
-    Iterator.tabulate(sketch.length) { idx => (idx, similarIndexes(idx, minEst, 0.0, null)) }
+    allSimilarIndexes(minEst, 0.0, null)
 
   def allSimilarItems(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, Iterator[Sim])] =
-    Iterator.tabulate(sketch.length) { idx => (idx, similarItems(idx, minEst, minSim, f)) }
+    if (cfg.compact) Iterator.tabulate(sketch.length) { idx => (idx, similarItems(idx, minEst, minSim, f)) }
+    else             _allSimilarItems_notCompact(minEst, minSim, f)
   def allSimilarItems(minEst: Double): Iterator[(Int, Iterator[Sim])] =
-    Iterator.tabulate(sketch.length) { idx => (idx, similarItems(idx, minEst, 0.0, null)) }
+    allSimilarItems(minEst, 0.0, null)
 
   def rawSimilarItemsStream(minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] = {
     if (minEst == Double.NegativeInfinity) {
@@ -564,25 +623,32 @@ abstract class LSH { self =>
   }
   def rawSimilarItemsStream(minEst: Double): Iterator[Sim] = rawSimilarItemsStream(minEst, 0.0, null)
 
+
   /** must never return duplicates */
-  def selectCandidates(idx: Int): Idxs =
-    if (cfg.maxCandidates == Int.MaxValue) {
-      candidateIndexes(getSketchArray, idx)
+  def selectCandidates(idx: Int): Idxs = {
+    // TODO candidate selection can be done on the fly without allocations
+    //      using some sort of specialized merging iterator
+    val rci = rawCandidateIndexes(getSketchArray, idx)
+    val candidateCount = rci.iterator.map(_.length).sum
+
+    if (candidateCount <= cfg.maxCandidates) {
+      fastSparse.union(rci)
+
     } else {
-
-      val rci = rawCandidateIndexes(getSketchArray, idx)
-
-      val candidateCount = rci.iterator.map(_.length).sum
-
-      if (candidateCount <= cfg.maxCandidates) {
-        fastSparse.union(rci)
-
-      } else {
-        val map = new IntFreqMap(initialSize = 32, loadFactor = 0.42, freqThreshold = bands)
-        for (is <- rci) { map ++= (is, 1) }
-        map.topK(cfg.maxCandidates)
-      }
+      val map = new IntFreqMap(initialSize = cfg.maxCandidates, loadFactor = 0.42, freqThreshold = bands)
+      for (is <- rci) { map ++= (is, 1) }
+      map.topK(cfg.maxCandidates)
     }
+  }
+
+  def newIndexResultBuilder(distinct: Boolean = false): IndexResultBuilder =
+    IndexResultBuilder.make(distinct, cfg.maxResults)
+
+  protected def indexesToSimsNoEstimate(idx: Int, simIdxs: Idxs, f: SimFun) =
+    simIdxs.iterator.map { simIdx => Sim(idx, simIdx, 0.0, f(idx, simIdx)) }
+
+  protected def indexesToSims(idx: Int, simIdxs: Idxs, f: SimFun, sketch: SketchArray) =
+    simIdxs.iterator.map { simIdx => Sim(idx, simIdx, estimator.estimateSimilarity(sketch, idx, sketch, simIdx), f(idx, simIdx)) }
 
 }
 
@@ -595,6 +661,7 @@ abstract class LSH { self =>
 final case class IntLSH(
     sketch: IntSketch, estimator: IntEstimator, cfg: LSHCfg,
     idxs: Array[Array[Int]], sketches: Array[Array[Int]],
+    length: Int,
     sketchLength: Int, bands: Int, bandLength: Int, hashBits: Int,
     includeSketches: Boolean
   ) extends LSH with Serializable {
@@ -643,6 +710,7 @@ final case class IntLSH(
 final case class BitLSH(
     sketch: BitSketch, estimator: BitEstimator, cfg: LSHCfg,
     idxs: Array[Array[Int]], sketches: Array[Array[Long]],
+    length: Int,
     bitsPerSketch: Int, bands: Int, bandBits: Int,
     includeSketches: Boolean
   ) extends LSH with Serializable {
