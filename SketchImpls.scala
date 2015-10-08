@@ -72,6 +72,44 @@ object MinHash {
 
 
 
+/** MinHash that uses only one bit. It's much faster than traditional MinHash
+  * but it seems it's less precise.
+  * As of right now it's not really suitable for LSH, because most elements
+  * are hashed into few buckets. Investigation pending.
+  * https://www.endgame.com/blog/minhash-vs-bitwise-set-hashing-jaccard-similarity-showdown */
+object SingleBitMinHash {
+  import MinHash.{ MinHasher, randomHashFunction }
+
+  def sketching[Item](sets: Seq[Item], n: Int)(implicit mk: HashFunc[Int] => MinHasher[Item]): BitSketching =
+    new BitSketchingOf(sets, n, (i: Int) => SingleBitMinHasher(mk(randomHashFunction(i * 1000))), mkEstimator(n))
+
+  def apply[Item](sets: Seq[Item], n: Int)(implicit mk: HashFunc[Int] => MinHasher[Item]): BitSketch =
+    BitSketch.make(sketching(sets, n), mkEstimator(n), componentsAtOnce = n)
+
+  case class SingleBitMinHasher[T](mh: MinHasher[T]) extends BitSketcher[T] {
+    def apply(x: T): Boolean = (mh(x) & 1) != 0
+  }
+
+  implicit def IntArrayMinHasher(f: HashFunc[Int]) = MinHash.IntArrayMinHasher(f)
+  implicit def GeneralMinHasher(f: HashFunc[Int]) = MinHash.GeneralMinHasher(f)
+
+  def mkEstimator(sketchLength: Int) = sketchLength match {
+    case 64  => new Estimator(sketchLength) with BitEstimator64
+    case 128 => new Estimator(sketchLength) with BitEstimator128
+    case 256 => new Estimator(sketchLength) with BitEstimator256
+    case _   => new Estimator(sketchLength)
+  }
+
+  class Estimator(val sketchLength: Int) extends BitEstimator {
+    def estimateSimilarity(sameBits: Int): Double =
+      1.0 - 2.0 / sketchLength * (sketchLength - sameBits)
+
+    def minSameBits(sim: Double): Int = {
+      sketchLength - ((1 - sim) / (2.0 / sketchLength)).toInt
+    }
+  }
+}
+
 
 
 object RandomHyperplanes {
