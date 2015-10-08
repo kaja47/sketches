@@ -57,12 +57,20 @@ case class LSHCfg(
   /** How many final results to return. */
   maxResults: Int = Int.MaxValue,
 
+  /** Forces LSH object to use only estimate to select top-k results.
+    * This option has effect only for allSimilarItems methods called with
+    * option maxResults set. */
+  orderByEstimate: Boolean = false,
+
   /** If this is set to false, some operations might use faster code, that
     * needs to store all similar items in memory */
   compact: Boolean = true,
 
   /** Perform bulk query in parallel? */
-  parallel: Boolean = false
+  parallel: Boolean = false,
+
+  // TODO
+  parallelPartialResultSize: Double = 1.0
 ) {
   def accept(idxs: Array[Int]) = idxs != null && idxs.length <= maxBucketSize
 }
@@ -299,10 +307,12 @@ abstract class LSH { self =>
       apply(sketch.getSketchFragment(idx), 0, minEst, 0.0, null)
     def apply(sketch: Sketching, idx: Int, minEst: Double, minSim: Double, f: SimFun): Res =
       apply(sketch.getSketchFragment(idx), 0, minEst, minSim, f)
-    def apply(idx: Int, minEst: Double, minSim: Double, f: SimFun): Res =
+
+    def apply(idx: Int, minEst: Double, minSim: Double, f: SimFun): Res = {
+      require(idx < 0 || idx >= length, s"index $idx is out of range (0 until $length)")
       apply(getSketchArray, idx, minEst, minSim, f)
-    def apply(idx: Int, minEst: Double): Res =
-      apply(getSketchArray, idx, minEst, 0.0, null)
+    }
+    def apply(idx: Int, minEst: Double): Res = apply(idx, minEst, 0.0, null)
   }
 
   // =====
@@ -332,6 +342,7 @@ abstract class LSH { self =>
       val res = new ArrayBuilder.ofInt
 
       if (isNegInf(minEst)) {
+        requireSimFun(f)
         for (idxs <- rawCandidateIndexes(sketch, idx)) {
           var i = 0 ; while (i < idxs.length) {
             if (f(idxs(i), idx) >= minSim) { res += idxs(i) }
@@ -363,7 +374,7 @@ abstract class LSH { self =>
       val res = newIndexResultBuilder()
 
       if (isNegInf(minEst)) {
-        // TODO: require(f != null)
+        requireSimFun(f)
         var i = 0 ; while (i < candidates.length) {
           var sim = 0.0
           if (idx != candidates(i) && { sim = f(candidates(i), idx) ; sim >= minSim }) {
@@ -392,8 +403,9 @@ abstract class LSH { self =>
   def similarItems = new Query[Iterator[Sim]] {
     def apply(sketch: SketchArray, idx: Int, minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] = {
       // Estimates and similarities are recomputed once more for similar items.
-      val simIdxs = similarIndexes(sketch, idx, minEst, minSim, f)
-      indexesToSims(idx, simIdxs, f, sketch, minEst == Double.NegativeInfinity)
+      val ff = if (cfg.orderByEstimate) null else f
+      val simIdxs = similarIndexes(sketch, idx, minEst, minSim, ff)
+      indexesToSims(idx, simIdxs, f, sketch, isNegInf(minEst))
     }
   }
 
@@ -401,114 +413,115 @@ abstract class LSH { self =>
     * much faster, because it needs to do only half of iterations and accessed
     * data have better cache locality. */
   protected def _allSimilarIndexes_notCompact(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, Idxs)] = {
-    val res = Array.fill(length)(newIndexResultBuilder(distinct = true))
 
-    if (minEst == Double.NegativeInfinity) {
-      val comparisons = streamIndexes.map { idxs => (idxs.length - 1) * idxs.length / 2 } sum
-      val ratio = 1.0 * length * cfg.maxCandidates / comparisons
+    // maxCandidates option is simulated via sampling
+    val comparisons = streamIndexes.map { idxs => (idxs.length - 1) * idxs.length / 2 } sum
+    val ratio = 1.0 * length * cfg.maxCandidates / comparisons
 
+    if (isNegInf(minSim)) requireSimFun(f)
+
+    val res =
       if (cfg.parallel) {
-        val partialResults = new java.util.concurrent.CopyOnWriteArrayList[Array[IndexResultBuilder]]()
+        val partialResults = new CopyOnWriteArrayList[Array[IndexResultBuilder]]()
         val tl = new ThreadLocal[Array[IndexResultBuilder]] {
           override def initialValue = {
-            val res = Array.fill(length)(newIndexResultBuilder(distinct = true))
-            partialResults.add(res)
-            res
+            val local = Array.fill(length)(newIndexResultBuilder(distinct = true))
+            partialResults.add(local)
+            local
           }
         }
 
         streamIndexes.grouped(1024).toVector.par.foreach { idxsgr =>
           val local = tl.get
-          val rand = java.util.concurrent.ThreadLocalRandom.current()
-          idxsgr.foreach { (idxs: Idxs) =>
-
-            var i = 0 ; while (i < idxs.length) {
-              if (rand.nextDouble() < ratio) {
-              var j = i+1 ; while (j < idxs.length) {
-                var sim = 0.0
-                if ({ sim = f(idxs(i), idxs(j)) ; sim >= minSim }) {
-                  local(idxs(i)) += (idxs(j), sim)
-                  local(idxs(j)) += (idxs(i), sim)
-                }
-                j += 1
-              }
-              }
-              i += 1
-            }
-
+          for (idxs <- idxsgr) {
+            runTile(idxs, ratio, minEst, minSim, f, local)
           }
         }
 
-        partialResults.toArray(Array[Array[IndexResultBuilder]]()).par foreach { local =>
+        val pr = partialResults.toArray(Array[Array[IndexResultBuilder]]())
+        val res = pr.head // reuse the first partial result as an accumulator
+        pr.tail.par foreach { local =>
           var i = 0 ; while (i < local.length) {
-            if (local(i) != null) { res(i).synchronized { res(i) ++= local(i) } }
+            res(i).synchronized { res(i) ++= local(i) }
             i += 1
           }
         }
+        res
 
       } else {
-        val rand = java.util.concurrent.ThreadLocalRandom.current()
+        val res = Array.fill(length)(newIndexResultBuilder(distinct = true))
         for (idxs <- streamIndexes) {
-          var i = 0 ; while (i < idxs.length) {
-            if (rand.nextDouble() < ratio) {
-            var j = i+1 ; while (j < idxs.length) {
-              var sim = 0.0
-              if ({ sim = f(idxs(i), idxs(j)) ; sim >= minSim }) {
-                res(idxs(i)) += (idxs(j), sim)
-                res(idxs(j)) += (idxs(i), sim)
-              }
-              j += 1
-            }
-            }
-            i += 1
-          }
+          runTile(idxs, ratio, minEst, minSim, f, res)
         }
+        res
       }
-    } else {
-      val minBits = sketch.minSameBits(minEst)
-      val skarr = getSketchArray
-      for (idxs <- streamIndexes) {
-        var i = 0 ; while (i < idxs.length) {
-          var j = i+1 ; while (j < idxs.length) {
-            val bits = estimator.sameBits(skarr, idxs(i), skarr, idxs(j))
-            var sim = 0.0
-            if (bits >= minBits && (f == null || { sim = f(idxs(i), idxs(j)) ; sim >= minSim })) {
-              sim = if (f == null) estimator.estimateSimilarity(bits) else sim
-              res(idxs(i)) += (idxs(j), sim)
-              res(idxs(j)) += (idxs(i), sim)
-            }
-            j += 1
-          }
-          i += 1
-        }
-      }
-    }
 
     Iterator.tabulate(length) { idx => (idx, res(idx).result) }
   }
 
+  protected def runTile(idxs: Idxs, ratio: Double, minEst: Double, minSim: Double, f: SimFun, res: Array[IndexResultBuilder]) =
+    if (isNegInf(minEst)) {
+      runTileNoEstimate(idxs, ratio, minSim, f, res)
+    } else {
+      runTileYesEstimate(idxs, ratio, minEst, minSim, f, res)
+    }
 
-  protected def _allSimilarItems_notCompact(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, Iterator[Sim])] = {
-    // Estimates and similarities are recomputed once more for similar items.
-    val iter = _allSimilarIndexes_notCompact(minEst, minSim, f)
-    val noEstimates = minEst == Double.NegativeInfinity
-    iter map { case (idx, simIdxs) => (idx, indexesToSims(idx, simIdxs, f, getSketchArray, noEstimates)) }
+  protected def runTileNoEstimate(idxs: Idxs, ratio: Double, minSim: Double, f: SimFun, res: Array[IndexResultBuilder]) = {
+    var i = 0 ; while (i < idxs.length) {
+      if (ThreadLocalRandom.current().nextDouble() < ratio) {
+        var j = i+1 ; while (j < idxs.length) {
+          var sim = 0.0
+          if ({ sim = f(idxs(i), idxs(j)) ; sim >= minSim }) {
+            res(idxs(i)) += (idxs(j), sim)
+            res(idxs(j)) += (idxs(i), sim)
+          }
+          j += 1
+        }
+      }
+      i += 1
+    }
   }
 
+  protected def runTileYesEstimate(idxs: Idxs, ratio: Double, minEst: Double, minSim: Double, f: SimFun, res: Array[IndexResultBuilder]) = {
+    val minBits = sketch.minSameBits(minEst)
+    val skarr = getSketchArray
+    var i = 0 ; while (i < idxs.length) {
+      if (ThreadLocalRandom.current().nextDouble() < ratio) {
+        var j = i+1 ; while (j < idxs.length) {
+          val bits = estimator.sameBits(skarr, idxs(i), skarr, idxs(j))
+          var sim = 0.0
+          if (bits >= minBits && (f == null || { sim = f(idxs(i), idxs(j)) ; sim >= minSim })) {
+            sim = if (f == null) estimator.estimateSimilarity(bits) else sim
+            res(idxs(i)) += (idxs(j), sim)
+            res(idxs(j)) += (idxs(i), sim)
+          }
+          j += 1
+        }
+        i += 1
+      }
+    }
+  }
+
+
   def allSimilarIndexes(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, Idxs)] =
-    if (cfg.compact) Iterator.tabulate(sketch.length) { idx => (idx, similarIndexes(idx, minEst, minSim, f)) }
-    else             _allSimilarIndexes_notCompact(minEst, minSim, f)
+    (cfg.compact, cfg.parallel) match {
+      case (true, false) => Iterator.tabulate(sketch.length) { idx => (idx, similarIndexes(idx, minEst, minSim, f)) }
+      case (true, true)  => (0 until sketch.length grouped 1024) flatMap { idxs => idxs.par.map { idx => (idx, similarIndexes(idx, minEst, minSim, f)) } }
+      case (false, _)    => _allSimilarIndexes_notCompact(minEst, minSim, f)
+    }
   def allSimilarIndexes(minEst: Double): Iterator[(Int, Idxs)] =
     allSimilarIndexes(minEst, 0.0, null)
 
-  def allSimilarItems(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, Iterator[Sim])] =
-    if (cfg.compact) Iterator.tabulate(sketch.length) { idx => (idx, similarItems(idx, minEst, minSim, f)) }
-    else             _allSimilarItems_notCompact(minEst, minSim, f)
+  def allSimilarItems(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, Iterator[Sim])] = {
+    val ff = if (cfg.orderByEstimate) null else f
+    allSimilarIndexes(minEst, minSim, ff) map { case (idx, simIdxs) => (idx, indexesToSims(idx, simIdxs, f, getSketchArray, isNegInf(minEst))) }
+  }
   def allSimilarItems(minEst: Double): Iterator[(Int, Iterator[Sim])] =
     allSimilarItems(minEst, 0.0, null)
 
   def rawSimilarItemsStream(minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] = {
-    if (minEst == Double.NegativeInfinity) {
+    if (isNegInf(minEst)) {
+      requireSimFun(f)
       rawStreamIndexes flatMap { idxs =>
         val res = collection.mutable.ArrayBuffer[Sim]()
         var i = 0 ; while (i < idxs.length) {
@@ -580,7 +593,8 @@ abstract class LSH { self =>
       }
     }
 
-    def isNegInf(d: Double) = d == Double.NegativeInfinity
+    protected def isNegInf(d: Double) = d == Double.NegativeInfinity
+    protected def requireSimFun(f: SimFun) = require(f != null, "similarity function is required")
 
 }
 
