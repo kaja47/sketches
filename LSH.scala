@@ -96,9 +96,9 @@ object LSH {
   // === BitLSH =================
 
   def apply(sk: BitSketching, bands: Int): BitLSH =
-    apply(sk, bands, false, LSHBuildCfg())
+    apply(sk, bands, LSHBuildCfg())
 
-  def apply(sk: BitSketching, bands: Int, includeSketches: Boolean, cfg: LSHBuildCfg): BitLSH = {
+  def apply(sk: BitSketching, bands: Int, cfg: LSHBuildCfg): BitLSH = {
     require(sk.sketchLength % 64 == 0 && bands > 0)
 
     val bandBits = sk.sketchLength / bands
@@ -107,8 +107,6 @@ object LSH {
     val longsLen = sk.sketchLength / 64
 
     require(bandBits < 32)
-
-    if (includeSketches) ??? // TODO
 
     val idxs     = new Array[Array[Int]](bands * bandSize)
     val sketches = null//new Array[Array[Long]](bands * bandSize)
@@ -150,7 +148,7 @@ object LSH {
     }
 
     val _sk = sk match { case sk: BitSketch => sk ; case _ => null }
-    new BitLSH(_sk, sk.estimator, LSHCfg(), idxs, sketches, sk.length, sk.sketchLength, bands, bandBits, includeSketches)
+    new BitLSH(_sk, sk.estimator, LSHCfg(), idxs, sketches, sk.length, sk.sketchLength, bands, bandBits)
   }
 
 
@@ -161,23 +159,17 @@ object LSH {
   // === IntLSH =================
 
   def apply(sk: IntSketching, bands: Int): IntLSH =
-    apply(sk, bands, 32 - Integer.numberOfLeadingZeros(sk.length), false, LSHBuildCfg())
+    apply(sk, bands, 32 - Integer.numberOfLeadingZeros(sk.length), LSHBuildCfg())
 
   def apply(sk: IntSketching, bands: Int, hashBits: Int): IntLSH =
-    apply(sk, bands, hashBits, false, LSHBuildCfg())
+    apply(sk, bands, hashBits, LSHBuildCfg())
 
-  def apply(sk: IntSketching, bands: Int, hashBits: Int, includeSketches: Boolean): IntLSH =
-    apply(sk, bands, hashBits, includeSketches, LSHBuildCfg())
-
-  def apply(sk: IntSketching, bands: Int, hashBits: Int, includeSketches: Boolean, cfg: LSHBuildCfg): IntLSH = {
+  def apply(sk: IntSketching, bands: Int, hashBits: Int, cfg: LSHBuildCfg): IntLSH = {
     require(bands > 0 && hashBits > 0)
 
     val bandElements = sk.sketchLength / bands // how many elements from sketch is used in one band
     val hashMask = (1 << hashBits) - 1
     val bandSize = (1 << hashBits) // how many hashes are possible in one band
-
-    if (includeSketches) ??? // TODO
-
 
     val idxs     = new Array[Array[Int]](bands * bandSize)
     val sketches = null//new Array[Array[Long]](bands * bandSize)
@@ -226,7 +218,7 @@ object LSH {
     }
 
     val _sk = sk match { case sk: IntSketch => sk ; case _ => null }
-    new IntLSH(_sk, sk.estimator, LSHCfg(), idxs, sketches, sk.length, sk.sketchLength, bands, bandElements, hashBits, includeSketches)
+    new IntLSH(_sk, sk.estimator, LSHCfg(), idxs, sketches, sk.length, sk.sketchLength, bands, bandElements, hashBits)
   }
 
   def hashSlice(sketchArray: Array[Int], sketchLength: Int, i: Int, band: Int, bandLength: Int, hashBits: Int) = {
@@ -283,7 +275,6 @@ abstract class LSH { self =>
   def estimator: Estimator[SketchArray]
   def cfg: LSHCfg
   def bands: Int
-  def includeSketches: Boolean
 
   protected def getSketchArray: SketchArray = if (sketch != null) sketch.sketchArray else null.asInstanceOf[SketchArray]
 
@@ -318,7 +309,7 @@ abstract class LSH { self =>
   def candidateIndexes(sketch: Sketching, idx: Int): Idxs = candidateIndexes(sketch.getSketchFragment(idx), 0)
   def candidateIndexes(idx: Int): Idxs = candidateIndexes(sketch.sketchArray, idx)
 
-  // Following methods need valid sketch object or inline sketches.
+  // Following methods need valid sketch object.
   // If minEst is set to Double.NegativeInfinity, no estimates are computed.
   // Instead candidates are directly filtered through similarity function.
   def rawSimilarIndexes(sketch: SketchArray, idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs = {
@@ -328,16 +319,6 @@ abstract class LSH { self =>
       for (idxs <- rawCandidateIndexes(sketch, idx)) {
         var i = 0 ; while (i < idxs.length) {
           if (f(idxs(i), idx) >= minSim) { res += idxs(i) }
-          i += 1
-        }
-      }
-
-    } else if (includeSketches) {
-      val minBits = estimator.minSameBits(minEst)
-      for ((idxs, skArr) <- rawCandidates(sketch, idx)) {
-        var i = 0 ; while (i < idxs.length) {
-          val bits = estimator.sameBits(skArr, i, sketch, idx)
-          if (bits >= minBits && (f == null || f(idxs(i), idx) >= minSim)) { res += idxs(i) }
           i += 1
         }
       }
@@ -367,7 +348,7 @@ abstract class LSH { self =>
   def rawSimilarIndexes(idx: Int, minEst: Double): Idxs =
     rawSimilarIndexes(getSketchArray, idx, minEst, 0.0, null)
 
-  // Following methods need valid sketch object or inline sketches
+  // Following methods need valid sketch object
   // similarIndexes().toSet == (rawSimilarIndexes().distinct.toSet - idx)
   def similarIndexes(sketch: SketchArray, idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs = {
     val candidates = selectCandidates(idx)
@@ -382,10 +363,6 @@ abstract class LSH { self =>
         }
         i += 1
       }
-
-    } else if (includeSketches) {
-      rawSimilarIndexes(sketch, idx, minEst, minSim, f).distinct // TODO filtering
-      ???
 
     } else {
       val minBits = estimator.minSameBits(minEst)
@@ -412,14 +389,12 @@ abstract class LSH { self =>
   def similarIndexes(idx: Int, minEst: Double): Idxs =
     similarIndexes(getSketchArray, idx, minEst, 0.0, null)
 
-  // Following methods need valid sketch object or inline sketches
+  // Following methods need valid sketch object
   def similarItems(sketch: SketchArray, idx: Int, minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] = {
     // Estimates and similarities are recomputed once more for similar items.
     val simIdxs = similarIndexes(sketch, idx, minEst, minSim, f)
     if (minEst == Double.NegativeInfinity) {
       indexesToSimsNoEstimate(idx, simIdxs, f)
-    } else if (includeSketches) {
-      ???
     } else {
       indexesToSims(idx, simIdxs, f, sketch)
     }
@@ -512,8 +487,6 @@ abstract class LSH { self =>
           }
         }
       }
-    } else if (includeSketches) {
-      ???
     } else {
       val minBits = sketch.minSameBits(minEst)
       val skarr = getSketchArray
@@ -543,8 +516,6 @@ abstract class LSH { self =>
     val iter = _allSimilarIndexes_notCompact(minEst, minSim, f)
     if (minEst == Double.NegativeInfinity) {
       iter map { case (idx, simIdxs) => (idx, indexesToSimsNoEstimate(idx, simIdxs, f)) }
-    } else if (includeSketches) {
-      ???
     } else {
       iter map { case (idx, simIdxs) => (idx, indexesToSims(idx, simIdxs, f, getSketchArray)) }
     }
@@ -571,26 +542,6 @@ abstract class LSH { self =>
             var sim: Double = 0.0
             if (f == null || { sim = f(idxs(i), idxs(j)) ; sim >= minSim }) {
               res += Sim(idxs(i), idxs(j), 0.0, sim)
-            }
-            j += 1
-          }
-          i += 1
-        }
-        res
-      }).flatten
-
-    } else if (includeSketches) {
-      val minBits = sketch.minSameBits(minEst)
-      (for ((idxs, skArr) <- rawStream) yield {
-        val res = collection.mutable.ArrayBuffer[Sim]()
-        var i = 0 ; while (i < idxs.length) {
-          var j = i+1 ; while (j < idxs.length) {
-            val bits = estimator.sameBits(skArr, i, skArr, j)
-            if (bits >= minBits) {
-              var sim: Double = 0.0
-              if (f == null || { sim = f(idxs(i), idxs(j)) ; sim >= minSim }) {
-                res += Sim(idxs(i), idxs(j), estimator.estimateSimilarity(bits), sim)
-              }
             }
             j += 1
           }
@@ -662,8 +613,7 @@ final case class IntLSH(
     sketch: IntSketch, estimator: IntEstimator, cfg: LSHCfg,
     idxs: Array[Array[Int]], sketches: Array[Array[Int]],
     length: Int,
-    sketchLength: Int, bands: Int, bandLength: Int, hashBits: Int,
-    includeSketches: Boolean
+    sketchLength: Int, bands: Int, bandLength: Int, hashBits: Int
   ) extends LSH with Serializable {
 
   type SketchArray = Array[Int]
@@ -711,8 +661,7 @@ final case class BitLSH(
     sketch: BitSketch, estimator: BitEstimator, cfg: LSHCfg,
     idxs: Array[Array[Int]], sketches: Array[Array[Long]],
     length: Int,
-    bitsPerSketch: Int, bands: Int, bandBits: Int,
-    includeSketches: Boolean
+    bitsPerSketch: Int, bands: Int, bandBits: Int
   ) extends LSH with Serializable {
 
   type SketchArray = Array[Long]
