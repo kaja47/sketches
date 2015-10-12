@@ -117,8 +117,7 @@ object LSH {
 
     require(bandBits < 32)
 
-    val idxs     = new Array[Array[Int]](bands * bandSize)
-    val sketches = null//new Array[Array[Long]](bands * bandSize)
+    val idxs = new Array[Array[Int]](bands * bandSize)
 
     for ((bs, bandGroup) <- bandGrouping(bands, cfg)) {
 
@@ -157,7 +156,7 @@ object LSH {
     }
 
     val _sk = sk match { case sk: BitSketch => sk ; case _ => null }
-    new BitLSH(_sk, sk.estimator, LSHCfg(), idxs, sketches, sk.length, sk.sketchLength, bands, bandBits)
+    new BitLSH(_sk, sk.estimator, LSHCfg(), idxs, sk.length, sk.sketchLength, bands, bandBits)
   }
 
 
@@ -180,8 +179,7 @@ object LSH {
     val hashMask = (1 << hashBits) - 1
     val bandSize = (1 << hashBits) // how many hashes are possible in one band
 
-    val idxs     = new Array[Array[Int]](bands * bandSize)
-    val sketches = null//new Array[Array[Long]](bands * bandSize)
+    val idxs = new Array[Array[Int]](bands * bandSize)
 
     for ((bs, bandGroup) <- bandGrouping(bands, cfg)) {
 
@@ -227,7 +225,7 @@ object LSH {
     }
 
     val _sk = sk match { case sk: IntSketch => sk ; case _ => null }
-    new IntLSH(_sk, sk.estimator, LSHCfg(), idxs, sketches, sk.length, sk.sketchLength, bands, bandElements, hashBits)
+    new IntLSH(_sk, sk.estimator, LSHCfg(), idxs, sk.length, sk.sketchLength, bands, bandElements, hashBits)
   }
 
   def hashSlice(sketchArray: Array[Int], sketchLength: Int, i: Int, band: Int, bandLength: Int, hashBits: Int) = {
@@ -260,10 +258,7 @@ object LSH {
 /** LSH configuration
   *
   * LSH, full Sketch
-  * LSH, empty Sketch, embedded sketches
-  *  - embedded sketches greatly increase memory usage but can make search
-  *    faster because they provide better locality
-  * LSH, empty Sketch, no embedded sketches
+  * LSH, empty Sketch
   *  - can only provide list of candidates, cannot estimate similarities
   *
   * - Methods with "raw" prefix might return duplicates and are not affected by
@@ -317,14 +312,9 @@ abstract class LSH { self =>
 
   // =====
 
-  def rawStream: Iterator[(Idxs, SketchArray)]
   def rawStreamIndexes: Iterator[Idxs]
   /** same as rawStreamIndexes, but arrays are limited by maxBucketSize */
   def streamIndexes: Iterator[Idxs] = rawStreamIndexes filter cfg.accept
-
-  def rawCandidates(sketch: SketchArray, idx: Int): Array[(Idxs, SketchArray)]
-  def rawCandidates(sketch: Sketching, idx: Int): Array[(Idxs, SketchArray)] = rawCandidates(sketch.getSketchFragment(idx), 0)
-  def rawCandidates(idx: Int): Array[(Idxs, SketchArray)] = rawCandidates(sketch.sketchArray, idx)
 
   def rawCandidateIndexes(sketch: SketchArray, idx: Int): Array[Idxs]
   def rawCandidateIndexes(sketch: Sketching, idx: Int): Array[Idxs] = rawCandidateIndexes(sketch.getSketchFragment(idx), 0)
@@ -606,7 +596,7 @@ abstract class LSH { self =>
   */
 final case class IntLSH(
     sketch: IntSketch, estimator: IntEstimator, cfg: LSHCfg,
-    idxs: Array[Array[Int]], sketches: Array[Array[Int]],
+    idxs: Array[Array[Int]],
     length: Int,
     sketchLength: Int, bands: Int, bandLength: Int, hashBits: Int
   ) extends LSH with Serializable {
@@ -614,10 +604,6 @@ final case class IntLSH(
   type SketchArray = Array[Int]
   type Sketching = IntSketching
   type Sketch = IntSketch
-
-  if (sketches != null) {
-    require(idxs.length == sketches.length)
-  }
 
   def withConfig(newCfg: LSHCfg): IntLSH = copy(cfg = newCfg)
 
@@ -627,16 +613,7 @@ final case class IntLSH(
   def bandHash(sketchArray: SketchArray, idx: Int, band: Int): Int =
     LSH.hashSlice(sketchArray, sketch.sketchLength, idx, band, bandLength, hashBits)
 
-  def rawStream: Iterator[(Idxs, SketchArray)] = (idxs.iterator zip sketches.iterator).filter(_._1 != null)
   def rawStreamIndexes: Iterator[Idxs] = idxs.iterator filter (_ != null)
-
-
-  def rawCandidates(sketch: SketchArray, idx: Int): Array[(Idxs, SketchArray)] =
-    Array.tabulate(bands) { b =>
-      val h = LSH.hashSlice(sketch, sketchLength, idx, b, bandLength, hashBits)
-      val bucket = b * (1 << hashBits) + h
-      (idxs(bucket), if (sketches == null) null else sketches(bucket))
-    }.filter { case (idxs, _) => cfg.accept(idxs) }
 
 
   def rawCandidateIndexes(sketch: SketchArray, idx: Int): Array[Idxs] =
@@ -645,8 +622,6 @@ final case class IntLSH(
       val bucket = b * (1 << hashBits) + h
       idxs(bucket)
     }.filter { idxs => cfg.accept(idxs) }
-
-
 }
 
 
@@ -654,7 +629,7 @@ final case class IntLSH(
 
 final case class BitLSH(
     sketch: BitSketch, estimator: BitEstimator, cfg: LSHCfg,
-    idxs: Array[Array[Int]], sketches: Array[Array[Long]],
+    idxs: Array[Array[Int]],
     length: Int,
     bitsPerSketch: Int, bands: Int, bandBits: Int
   ) extends LSH with Serializable {
@@ -663,25 +638,12 @@ final case class BitLSH(
   type Sketching = BitSketching
   type Sketch = BitSketch
 
-  if (sketches != null) {
-    require(idxs.length == sketches.length)
-  }
-
   def withConfig(newCfg: LSHCfg): BitLSH = copy(cfg = newCfg)
 
   def bandHashes(sketchArray: Array[Long], idx: Int): Iterator[Int] =
     Iterator.tabulate(bands) { b => LSH.ripBits(sketchArray, bitsPerSketch, idx, b, bandBits) }
 
-  def rawStream: Iterator[(Idxs, SketchArray)] = (idxs.iterator zip sketches.iterator).filter(_._1 != null)
   def rawStreamIndexes: Iterator[Idxs] = idxs.iterator filter (_ != null)
-
-
-  def rawCandidates(sketch: SketchArray, idx: Int): Array[(Idxs, SketchArray)] =
-    Array.tabulate(bands) { b =>
-      val h = LSH.ripBits(sketch, bitsPerSketch, idx, b, bandBits)
-      val bucket = b * (1 << bandBits) + h
-      (idxs(bucket), if (sketches == null) null else sketches(bucket))
-    }.filter { case (idxs, _) => cfg.accept(idxs) }
 
 
   def rawCandidateIndexes(sketch: SketchArray, idx: Int): Array[Idxs] =
