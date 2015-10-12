@@ -166,6 +166,7 @@ object fastSparse {
     res
   }
 
+
   def intersection(a: Array[Int], b: Array[Int]): Array[Int] = {
     val res = new Array[Int](intersectionSize(a, b))
     var i, ai, bi = 0
@@ -217,7 +218,13 @@ object fastSparse {
   }
 
 
+  def possibleSetOverlap(a: Array[Int], b: Array[Int]) =
+    !(a(a.length - 1) < b(0) || b(b.length - 1) < a(0))
+
+
   def weightedIntersectionSize(a: Array[Int], b: Array[Int], ws: Array[Double]): Double = {
+    if (!possibleSetOverlap(a, b)) return 0.0
+
     var ai, bi = 0
     var size = 0.0
     while (ai != a.length && bi != b.length) {

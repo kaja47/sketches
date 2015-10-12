@@ -86,7 +86,7 @@ class IntSet(initialSize: Int = 16, loadFactor: Double = 0.5) {
     val i = findIdx(k)
     if (!isOccupied(arr, i)) return this
     // if the next slot is not occupied (and therefore also not deleted), delete directly
-    if (!isOccupied(arr, (i + 1) & (capacity - 1))) { 
+    if (!isOccupied(arr, (i + 1) & (capacity - 1))) {
       _size -= 1
       filled -= 1
       setUnoccupied(arr, i)
@@ -411,6 +411,8 @@ class TopKFloatInt(k: Int, distinct: Boolean = false) extends BaseMinFloatIntHea
   }
 
   def head: Int = _minValue
+  def minKey: Float = _minKeyFloat
+  def minValue: Int = _minValue
 
   override def toString = arr.drop(1).take(size).map(l => (Bits.sortableIntToFloat(high(l)), low(l))).mkString("TopKFloatInt(", ",", ")")
 }
@@ -522,10 +524,6 @@ abstract class BaseMinIntIntHeap(val capacity: Int) {
 
 
 class Xorshift(var x: Int = System.currentTimeMillis.toInt, var y: Int = 4711, var z: Int = 5485612, var w: Int = 992121) {
-
-  def nextInt(mask: Int): Int =
-    math.abs(nextInt() & mask)
-
   def nextInt(): Int = {
     val t = x ^ (x << 11)
     x = y
