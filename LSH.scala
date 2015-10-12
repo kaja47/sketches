@@ -5,10 +5,11 @@ import java.lang.System.arraycopy
 import java.lang.Long.{ bitCount, rotateLeft }
 import java.util.Arrays
 import java.util.concurrent.{ CopyOnWriteArrayList, ThreadLocalRandom }
+import java.util.concurrent.atomic.{ AtomicReference, AtomicBoolean }
 import scala.util.hashing.MurmurHash3
 import scala.collection.{ mutable, GenSeq }
 import scala.collection.mutable.ArrayBuilder
-import math.{ pow, log }
+import math.{ pow, log, max, min }
 
 
 case class LSHBuildCfg(
@@ -69,9 +70,13 @@ case class LSHCfg(
   /** Perform bulk query in parallel? */
   parallel: Boolean = false,
 
-  // TODO
+  /** This option controls proportional size of intermediate results allocated
+    * during parallel non-compact bulk queries producing top-k results. Setting
+    * it lower than 1 saves some memory but might reduce precision. */
   parallelPartialResultSize: Double = 1.0
 ) {
+  require(parallelPartialResultSize > 0.0 && parallelPartialResultSize <= 1.0)
+
   def accept(idxs: Array[Int]) = idxs != null && idxs.length <= maxBucketSize
 }
 
@@ -274,7 +279,7 @@ abstract class LSH { self =>
   type Idxs = Array[Int]
   type SimFun = (Int, Int) => Double
 
-  def sketch: Sketch
+  def sketch: Sketch // might be null
   def length: Int
   def estimator: Estimator[SketchArray]
   def cfg: LSHCfg
@@ -412,12 +417,26 @@ abstract class LSH { self =>
 
     val res =
       if (cfg.parallel) {
+        val first = new AtomicBoolean(true)
+        var resRef = new AtomicReference[Array[IndexResultBuilder]](null)
         val partialResults = new CopyOnWriteArrayList[Array[IndexResultBuilder]]()
+        val truncatedResultSize =
+          if (cfg.maxResults < Int.MaxValue && cfg.parallelPartialResultSize < 1.0)
+            (cfg.maxResults * cfg.parallelPartialResultSize).toInt
+          else cfg.maxResults
+
         val tl = new ThreadLocal[Array[IndexResultBuilder]] {
           override def initialValue = {
-            val local = Array.fill(length)(newIndexResultBuilder(distinct = true))
-            partialResults.add(local)
-            local
+            if (first.getAndSet(false)) {
+              // First! Creates array on untruncated result builders.
+              val local = Array.fill(length)(newIndexResultBuilder(distinct = true))
+              resRef.set(local)
+              local
+            } else {
+              val local = Array.fill(length)(newIndexResultBuilder(distinct = true, truncatedResultSize))
+              partialResults.add(local)
+              local
+            }
           }
         }
 
@@ -428,9 +447,9 @@ abstract class LSH { self =>
           }
         }
 
+        val res = resRef.get
         val pr = partialResults.toArray(Array[Array[IndexResultBuilder]]())
-        val res = pr.head // reuse the first partial result as an accumulator
-        pr.tail.par foreach { local =>
+        pr.par foreach { local =>
           var i = 0 ; while (i < local.length) {
             res(i).synchronized { res(i) ++= local(i) }
             i += 1
@@ -569,8 +588,8 @@ abstract class LSH { self =>
     }
   }
 
-  protected def newIndexResultBuilder(distinct: Boolean = false): IndexResultBuilder =
-    IndexResultBuilder.make(distinct, cfg.maxResults)
+  protected def newIndexResultBuilder(distinct: Boolean = false, maxResults: Int = cfg.maxResults): IndexResultBuilder =
+    IndexResultBuilder.make(distinct, maxResults)
 
   protected def indexesToSims(idx: Int, simIdxs: Idxs, f: SimFun, sketch: SketchArray, noEstimates: Boolean) =
     if (noEstimates) {
@@ -583,8 +602,8 @@ abstract class LSH { self =>
       }
     }
 
-    protected def isNegInf(d: Double) = d == Double.NegativeInfinity
-    protected def requireSimFun(f: SimFun) = require(f != null, "similarity function is required")
+  protected def isNegInf(d: Double) = d == Double.NegativeInfinity
+  protected def requireSimFun(f: SimFun) = require(f != null, "similarity function is required")
 
 }
 
