@@ -12,7 +12,7 @@ object DBSCAN {
     new DBSCAN(dataset, eps, minPts, dist).run
 
   def apply[Point: ClassTag](dataset: Array[Point], minPts: Int, regionQueryFunc: Int => IndexedSeq[Int]): Result[Point] =
-    new DBSCAN(dataset, -1, minPts, ???) {
+    new DBSCAN(dataset, -1, minPts, (a: Point, b: Point) => ???) {
       override def regionQuery(pIdx: Int): IndexedSeq[Int] = regionQueryFunc(pIdx)
     }.run
 
