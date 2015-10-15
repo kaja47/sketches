@@ -1,5 +1,6 @@
 package atrox.sketch
 
+import scala.language.postfixOps
 import breeze.linalg.{ SparseVector, DenseVector, DenseMatrix, BitVector, normalize, Vector => bVector }
 import breeze.stats.distributions.Rand
 import java.lang.System.arraycopy
@@ -90,8 +91,8 @@ object SingleBitMinHash {
     def apply(x: T): Boolean = (mh(x) & 1) != 0
   }
 
-  implicit def IntArrayMinHasher(f: HashFunc[Int]) = MinHash.IntArrayMinHasher(f)
-  implicit def GeneralMinHasher(f: HashFunc[Int]) = MinHash.GeneralMinHasher(f)
+  implicit class IntArrayMinHasher(f: HashFunc[Int]) extends MinHash.IntArrayMinHasher(f)
+  implicit class GeneralMinHasher(f: HashFunc[Int])  extends MinHash.GeneralMinHasher(f)
 
   def mkEstimator(sketchLength: Int) = sketchLength match {
     case 64  => new Estimator(sketchLength) with BitEstimator64

@@ -9,6 +9,7 @@ import java.util.concurrent.atomic.{ AtomicReference, AtomicBoolean }
 import scala.util.hashing.MurmurHash3
 import scala.collection.{ mutable, GenSeq }
 import scala.collection.mutable.ArrayBuilder
+import scala.language.postfixOps
 import math.{ pow, log, max, min }
 
 
