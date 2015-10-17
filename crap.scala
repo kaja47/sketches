@@ -1,6 +1,7 @@
 package atrox
 
 import breeze.linalg.{ SparseVector, DenseVector, BitVector }
+import scala. { specialized => spec }
 
 object crap {
 
@@ -51,6 +52,32 @@ object crap {
 }
 
 
+/** Koloboke-style cursors.
+  *
+  * usage: while (cur.moveNext()) { doSomethingWith(cur.value) }
+  * */
+trait Cursor[@spec(Int, Long, Float, Double) V] {
+  def moveNext(): Boolean
+  def value: V
+}
+
+trait Cursor2[@spec(Int, Long, Float, Double) K, @spec(Int, Long, Float, Double) V] { self =>
+  def moveNext(): Boolean
+  def key: K
+  def value: V
+
+  def asKeys = new Cursor[K] {
+    def moveNext(): Boolean = self.moveNext
+    def value: K = self.key
+  }
+
+  def asValues = new Cursor[V] {
+    def moveNext(): Boolean = self.moveNext
+    def value: V = self.value
+  }
+}
+
+
 /** Set specialized for int values that uses direct hashing.
   *
   * slots states: free (00) → occupied (10) → deleted (11)
@@ -81,6 +108,12 @@ class IntSet(initialSize: Int = 16, loadFactor: Double = 0.5) {
     }
     this
   }
+
+  def ++= (cur: Cursor[Int]): this.type = {
+    while (cur.moveNext) { this += cur.value }
+    this
+  }
+
 
   def -= (k: Int): this.type = {
     val i = findIdx(k)
@@ -346,6 +379,16 @@ final class IntFreqMap(initialSize: Int = 32, loadFactor: Double = 0.3, freqThre
     res
   }
 
+  def cursor = new Cursor2[Int, Int] {
+    private var pos = -1
+    def moveNext() = {
+      do { pos += 1 } while (pos < capacity && freq(pos) <= 0)
+      pos < capacity
+    }
+    def key = keys(pos)
+    def value = freq(pos)
+  }
+
 }
 
 
@@ -415,7 +458,17 @@ class TopKFloatInt(k: Int, distinct: Boolean = false) extends BaseMinFloatIntHea
   def minValue: Int = _minValue
 
   override def toString = arr.drop(1).take(size).map(l => (Bits.sortableIntToFloat(high(l)), low(l))).mkString("TopKFloatInt(", ",", ")")
+
+  def cursor = new Cursor2[Float, Int] {
+    private var pos = -1
+    def moveNext() = { pos += 1 ; pos < top }
+    def key = Bits.sortableIntToFloat(high(arr(pos)))
+    def value = low(arr(pos))
+  }
+
+  def valuesCursor = cursor.asValues
 }
+
 
 class MinFloatIntHeap(capacity: Int) extends BaseMinFloatIntHeap(capacity) {
   def insert(key: Float, value: Int) = _insertFloat(key, value)
