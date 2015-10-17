@@ -48,8 +48,10 @@ class BloomFilter[@scala.specialized(Int, Long) T](val hashFunctions: Int, val b
   private[this] val arr = new Array[Long](bitLength / 64)
   private[this] val mask = bitLength - 1
 
+  protected def elemHashCode(x: T) = x.hashCode
+
   protected def hash(i: Int, x: T): Int =
-    fs(i)(x.hashCode)
+    fs(i)(elemHashCode(x))
 
   protected val fs =
     Array.tabulate[HashFunc[Int]](hashFunctions)(i => MinHash.randomHashFunction(i * 4747))
