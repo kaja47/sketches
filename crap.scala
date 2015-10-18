@@ -149,6 +149,15 @@ class IntSet(initialSize: Int = 16, loadFactor: Double = 0.5) {
     res
   }
 
+  def clear() = {
+    filled = 0
+    _size = 0
+    var i = 0 ; while (i < arr.length) {
+      arr(i) = 0
+      i += 1
+    }
+  }
+
   // Get position of the first empty slot or slot containing value k.
   // Must never return deleted slot.
   private def findIdx(k: Int) = {
@@ -442,7 +451,7 @@ class TopKFloatInt(k: Int, distinct: Boolean = false) extends BaseMinFloatIntHea
   }
 
   /** Return the content (the value part of key-value pair) of this heap sorted
-    * by the key part. */
+    * by the key part. This collection is emptied. */
   def drainToArray() = {
     val res = new Array[Int](size)
     var i = res.length-1 ; while (i >= 0) {
