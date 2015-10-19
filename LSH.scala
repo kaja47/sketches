@@ -416,57 +416,47 @@ abstract class LSH { self =>
 
     if (isNegInf(minSim)) requireSimFun(f)
 
-    val res =
-      if (cfg.parallel) {
-        val first = new AtomicBoolean(true)
-        var resRef = new AtomicReference[Array[IndexResultBuilder]](null)
-        val partialResults = new CopyOnWriteArrayList[Array[IndexResultBuilder]]()
-        val truncatedResultSize =
-          if (cfg.maxResults < Int.MaxValue && cfg.parallelPartialResultSize < 1.0)
-            (cfg.maxResults * cfg.parallelPartialResultSize).toInt
-          else cfg.maxResults
+    if (cfg.parallel) {
+      val partialResults = new CopyOnWriteArrayList[Array[IndexResultBuilder]]()
+      val truncatedResultSize =
+        if (cfg.maxResults < Int.MaxValue && cfg.parallelPartialResultSize < 1.0)
+          (cfg.maxResults * cfg.parallelPartialResultSize).toInt
+        else cfg.maxResults
 
-        val tl = new ThreadLocal[Array[IndexResultBuilder]] {
-          override def initialValue = {
-            if (first.getAndSet(false)) {
-              // First! Creates array on untruncated result builders.
-              val local = Array.fill(length)(newIndexResultBuilder(distinct = true))
-              resRef.set(local)
-              local
-            } else {
-              val local = Array.fill(length)(newIndexResultBuilder(distinct = true, truncatedResultSize))
-              partialResults.add(local)
-              local
-            }
-          }
+      val tl = new ThreadLocal[Array[IndexResultBuilder]] {
+        override def initialValue = {
+          val local = Array.fill(length)(newIndexResultBuilder(distinct = true, truncatedResultSize))
+          partialResults.add(local)
+          local
         }
-
-        streamIndexes.grouped(1024).toVector.par.foreach { idxsgr =>
-          val local = tl.get
-          for (idxs <- idxsgr) {
-            runTile(idxs, ratio, minEst, minSim, f, local)
-          }
-        }
-
-        val res = resRef.get
-        val pr = partialResults.toArray(Array[Array[IndexResultBuilder]]())
-        pr.par foreach { local =>
-          var i = 0 ; while (i < local.length) {
-            res(i).synchronized { res(i) ++= local(i) }
-            i += 1
-          }
-        }
-        res
-
-      } else {
-        val res = Array.fill(length)(newIndexResultBuilder(distinct = true))
-        for (idxs <- streamIndexes) {
-          runTile(idxs, ratio, minEst, minSim, f, res)
-        }
-        res
       }
 
-    Iterator.tabulate(length) { idx => (idx, res(idx).result) }
+      streamIndexes.grouped(1024).toVector.par.foreach { idxsgr =>
+        val local = tl.get
+        for (idxs <- idxsgr) {
+          runTile(idxs, ratio, minEst, minSim, f, local)
+        }
+      }
+
+      val idxsArr = new Array[Idxs](length)
+      val pr = partialResults.toArray(Array[Array[IndexResultBuilder]]())
+      (0 until length).par foreach { i =>
+        val target = newIndexResultBuilder(distinct = true)
+        for (p <- pr) target ++= p(i)
+        idxsArr(i) = target.result
+
+        for (p <- pr) p(i) = null
+      }
+      Iterator.tabulate(length) { idx => (idx, idxsArr(idx)) }
+
+    } else {
+      val res = Array.fill(length)(newIndexResultBuilder(distinct = true))
+      for (idxs <- streamIndexes) {
+        runTile(idxs, ratio, minEst, minSim, f, res)
+      }
+      Iterator.tabulate(length) { idx => (idx, res(idx).result) }
+    }
+
   }
 
   protected def runTile(idxs: Idxs, ratio: Double, minEst: Double, minSim: Double, f: SimFun, res: Array[IndexResultBuilder]) =
