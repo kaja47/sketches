@@ -310,7 +310,7 @@ abstract class LSH { self =>
       apply(sketch.getSketchFragment(idx), 0, minEst, minSim, f)
 
     def apply(idx: Int, minEst: Double, minSim: Double, f: SimFun): Res = {
-      require(idx < 0 || idx >= length, s"index $idx is out of range (0 until $length)")
+      require(idx >= 0 || idx < length, s"index $idx is out of range (0 until $length)")
       apply(getSketchArray, idx, minEst, minSim, f)
     }
     def apply(idx: Int, minEst: Double): Res = apply(idx, minEst, 0.0, null)
