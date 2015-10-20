@@ -75,6 +75,12 @@ trait Cursor2[@spec(Int, Long, Float, Double) K, @spec(Int, Long, Float, Double)
     def moveNext(): Boolean = self.moveNext
     def value: V = self.value
   }
+
+  def swap = new Cursor2[V, K] {
+    def moveNext() = self.moveNext
+    def key        = self.value
+    def value      = self.key
+  }
 }
 
 
