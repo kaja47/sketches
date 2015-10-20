@@ -321,6 +321,13 @@ abstract class LSH { self =>
     def apply(idx: Int, minEst: Double): Res = apply(idx, minEst, 0.0, null)
   }
 
+  trait BulkQuery[Res] {
+    def apply(minEst: Double, minSim: Double, f: SimFun): Res
+    def apply(minEst: Double): Res = apply(minEst, 0.0, null)
+    def apply(): Res = apply(0.0, 0.0, null)
+    def apply(f: SimFun): Res = apply(LSH.NoEstimate, 0.0, f)
+  }
+
   // =====
 
   def rawStreamIndexes: Iterator[Idxs]
@@ -518,65 +525,66 @@ abstract class LSH { self =>
   }
 
 
-  def allSimilarIndexes(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, Idxs)] =
-    (cfg.compact, cfg.parallel) match {
-      case (true, par) => parallelBatches(0 until length iterator, par) { idx => (idx, similarIndexes(idx, minEst, minSim, f)) }
-      case (false, _)  => _allSimilarIndexes_notCompact(minEst, minSim, f)
-    }
-  def allSimilarIndexes(minEst: Double): Iterator[(Int, Idxs)] =
-    allSimilarIndexes(minEst, 0.0, null)
+  def allSimilarIndexes = new BulkQuery[Iterator[(Int, Idxs)]] {
+    def apply(minEst: Double, minSim: Double, f: SimFun) =
+      (cfg.compact, cfg.parallel) match {
+        case (true, par) => parallelBatches(0 until length iterator, par) { idx => (idx, similarIndexes(idx, minEst, minSim, f)) }
+        case (false, _)  => _allSimilarIndexes_notCompact(minEst, minSim, f)
+      }
+  }
 
-  def allSimilarItems(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, Iterator[Sim])] = {
-    val ff = if (cfg.orderByEstimate) null else f
-    val iter = allSimilarIndexes(minEst, minSim, ff)
-    parallelBatches(iter, cfg.parallel, batchSize = 256) { case (idx, simIdxs) =>
-      (idx, indexesToSims(idx, simIdxs, f, isNegInf(minEst)))
+  def allSimilarItems = new BulkQuery[Iterator[(Int, Iterator[Sim])]] {
+    def apply(minEst: Double, minSim: Double, f: SimFun) = {
+      val ff = if (cfg.orderByEstimate) null else f
+      val iter = allSimilarIndexes(minEst, minSim, ff)
+      parallelBatches(iter, cfg.parallel, batchSize = 256) { case (idx, simIdxs) =>
+        (idx, indexesToSims(idx, simIdxs, f, isNegInf(minEst)))
+      }
     }
   }
-  def allSimilarItems(minEst: Double): Iterator[(Int, Iterator[Sim])] =
-    allSimilarItems(minEst, 0.0, null)
 
-  def rawSimilarItemsStream(minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] = {
-    if (isNegInf(minEst)) {
-      requireSimFun(f)
-      rawStreamIndexes flatMap { idxs =>
-        val res = collection.mutable.ArrayBuffer[Sim]()
-        var i = 0 ; while (i < idxs.length) {
-          var j = i+1 ; while (j < idxs.length) {
-            var sim: Double = 0.0
-            if (f == null || { sim = f(idxs(i), idxs(j)) ; sim >= minSim }) {
-              res += Sim(idxs(i), idxs(j), 0.0, sim)
-            }
-            j += 1
-          }
-          i += 1
-        }
-        res
-      }
-
-    } else {
-      val minBits = estimator.minSameBits(minEst)
-      val skarr = requireSketchArray
-      rawStreamIndexes flatMap { idxs =>
-        val res = collection.mutable.ArrayBuffer[Sim]()
-        var i = 0 ; while (i < idxs.length) {
-          var j = i+1 ; while (j < idxs.length) {
-            val bits = estimator.sameBits(skarr, idxs(i), skarr, idxs(j))
-            if (bits >= minBits) {
+  def rawSimilarItemsStream = new BulkQuery[Iterator[Sim]] {
+    def apply(minEst: Double, minSim: Double, f: SimFun) = {
+      if (isNegInf(minEst)) {
+        requireSimFun(f)
+        rawStreamIndexes flatMap { idxs =>
+          val res = collection.mutable.ArrayBuffer[Sim]()
+          var i = 0 ; while (i < idxs.length) {
+            var j = i+1 ; while (j < idxs.length) {
               var sim: Double = 0.0
-              if (f == null || { sim = f(idxs(i), idxs(j)) ; sim >= minSim }) {
-                res += Sim(idxs(i), idxs(j), estimator.estimateSimilarity(bits), sim)
+              if ({ sim = f(idxs(i), idxs(j)) ; sim >= minSim }) {
+                res += Sim(idxs(i), idxs(j), 0.0, sim)
               }
+              j += 1
             }
-            j += 1
+            i += 1
           }
-          i += 1
+          res
         }
-        res
+
+      } else {
+        val minBits = estimator.minSameBits(minEst)
+        val skarr = requireSketchArray
+        rawStreamIndexes flatMap { idxs =>
+          val res = collection.mutable.ArrayBuffer[Sim]()
+          var i = 0 ; while (i < idxs.length) {
+            var j = i+1 ; while (j < idxs.length) {
+              val bits = estimator.sameBits(skarr, idxs(i), skarr, idxs(j))
+              if (bits >= minBits) {
+                var sim: Double = 0.0
+                if (f == null || { sim = f(idxs(i), idxs(j)) ; sim >= minSim }) {
+                  res += Sim(idxs(i), idxs(j), estimator.estimateSimilarity(bits), sim)
+                }
+              }
+              j += 1
+            }
+            i += 1
+          }
+          res
+        }
       }
     }
   }
-  def rawSimilarItemsStream(minEst: Double): Iterator[Sim] = rawSimilarItemsStream(minEst, 0.0, null)
 
 
   /** must never return duplicates */
