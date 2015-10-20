@@ -170,7 +170,12 @@ object LSH {
   // === IntLSH =================
 
   def apply(sk: IntSketching, bands: Int): IntLSH =
-    apply(sk, bands, 32 - Integer.numberOfLeadingZeros(sk.length), LSHBuildCfg())
+    apply(sk, bands, pickBits(sk.length), LSHBuildCfg())
+
+  def apply(sk: IntSketching, bands: Int, cfg: LSHBuildCfg): IntLSH =
+    apply(sk, bands, pickBits(sk.length), cfg)
+
+  private def pickBits(len: Int) = 32 - Integer.numberOfLeadingZeros(len)
 
   def apply(sk: IntSketching, bands: Int, hashBits: Int): IntLSH =
     apply(sk, bands, hashBits, LSHBuildCfg())
@@ -286,10 +291,9 @@ abstract class LSH { self =>
   def cfg: LSHCfg
   def bands: Int
 
-  //protected def getSketchArray: SketchArray = if (sketch != null) sketch.sketchArray else null.asInstanceOf[SketchArray]
   protected def requireSketchArray: SketchArray = sketch match {
     case sk: atrox.sketch.Sketch[_] => sk.sketchArray.asInstanceOf[SketchArray]
-    case _ => sys.error("sketch required")
+    case _ => sys.error("Sketch instance required")
   }
 
   def withConfig(cfg: LSHCfg): LSH
@@ -315,10 +319,12 @@ abstract class LSH { self =>
       apply(sketch.getSketchFragment(idx), 0, idx, minEst, minSim, f)
 
     def apply(idx: Int, minEst: Double, minSim: Double, f: SimFun): Res = {
-      require(idx >= 0 || idx < length, s"index $idx is out of range (0 until $length)")
+      require(idx >= 0 && idx < length, s"index $idx is out of range (0 until $length)")
       apply(sketch.getSketchFragment(idx), 0, idx, minEst, minSim, f)
     }
     def apply(idx: Int, minEst: Double): Res = apply(idx, minEst, 0.0, null)
+    def apply(idx: Int): Res = apply(idx, 0.0, 0.0, null)
+    def apply(idx: Int, f: SimFun): Res = apply(idx, LSH.NoEstimate, 0.0, f)
   }
 
   trait BulkQuery[Res] {
@@ -342,7 +348,6 @@ abstract class LSH { self =>
   //def candidateIndexes(sketch: Sketching, idx: Int): Idxs = candidateIndexes(sketch.getSketchFragment(idx), 0)
   //def candidateIndexes(idx: Int): Idxs = candidateIndexes(sketch.sketchArray, idx)
 
-  // Following methods need valid sketch object.
   // If minEst is set to Double.NegativeInfinity, no estimates are computed.
   // Instead candidates are directly filtered through similarity function.
   val rawSimilarIndexes = new Query[Idxs] {
@@ -375,7 +380,6 @@ abstract class LSH { self =>
     }
   }
 
-  // Following methods need valid sketch object
   // similarIndexes().toSet == (rawSimilarIndexes().distinct.toSet - idx)
   def similarIndexes = new Query[Idxs] {
     def apply(sketch: SketchArray, skidx: Int, idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs = {
@@ -417,10 +421,10 @@ abstract class LSH { self =>
     }
   }
 
-  // Following methods need valid sketch object
   def similarItems = new Query[Iterator[Sim]] {
     def apply(sketch: SketchArray, skidx: Int, idx: Int, minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] = {
       // Estimates and similarities are recomputed once more for similar items.
+      if (cfg.orderByEstimate) require(minEst != LSH.NoEstimate, "For orderByEstimate to work estimation must not be disabled.")
       val ff = if (cfg.orderByEstimate) null else f
       val simIdxs = similarIndexes(sketch, skidx, idx, minEst, minSim, ff)
       indexesToSims(idx, simIdxs, f, isNegInf(minEst))
@@ -535,6 +539,7 @@ abstract class LSH { self =>
 
   def allSimilarItems = new BulkQuery[Iterator[(Int, Iterator[Sim])]] {
     def apply(minEst: Double, minSim: Double, f: SimFun) = {
+      if (cfg.orderByEstimate) require(minEst != LSH.NoEstimate, "For orderByEstimate to work estimation must not be disabled.")
       val ff = if (cfg.orderByEstimate) null else f
       val iter = allSimilarIndexes(minEst, minSim, ff)
       parallelBatches(iter, cfg.parallel, batchSize = 256) { case (idx, simIdxs) =>
