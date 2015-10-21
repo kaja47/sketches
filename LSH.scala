@@ -75,6 +75,19 @@ case class LSHCfg(
   require(parallelPartialResultSize > 0.0 && parallelPartialResultSize <= 1.0)
 
   def accept(idxs: Array[Int]) = idxs != null && idxs.length <= maxBucketSize
+
+  override def toString = s"""
+    |LSHCfg(
+    |  maxBucketSize = $maxBucketSize
+    |  maxCandidates = $maxCandidates
+    |  maxResults = $maxResults
+    |  orderByEstimate = $orderByEstimate
+    |  compact = $compact
+    |  parallel = $parallel
+    |  parallelPartialResultSize = $parallelPartialResultSize
+    |  thicken = $thicken
+    |)
+  """.trim.stripMargin('|')
 }
 
 
@@ -354,7 +367,7 @@ abstract class LSH { self =>
     def apply(sketch: SketchArray, skidx: Int, idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs = {
       val res = new ArrayBuilder.ofInt
 
-      if (isNegInf(minEst)) {
+      if (minEst == LSH.NoEstimate) {
         requireSimFun(f)
         for (idxs <- rawCandidateIndexes(sketch, skidx)) {
           var i = 0 ; while (i < idxs.length) {
@@ -390,7 +403,7 @@ abstract class LSH { self =>
     }
   }
 
-  def similarItems = new Query[Iterator[Sim]] {
+  val similarItems = new Query[Iterator[Sim]] {
     def apply(sketch: SketchArray, skidx: Int, idx: Int, minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] = {
       // Estimates and similarities are recomputed once more for similar items.
       if (cfg.orderByEstimate) require(minEst != LSH.NoEstimate, "For orderByEstimate to work estimation must not be disabled.")
@@ -400,7 +413,7 @@ abstract class LSH { self =>
     }
   }
 
-  def allSimilarIndexes = new BulkQuery[Iterator[(Int, Idxs)]] {
+  val allSimilarIndexes = new BulkQuery[Iterator[(Int, Idxs)]] {
     def apply(minEst: Double, minSim: Double, f: SimFun) =
       (cfg.compact, cfg.parallel) match {
         case (true, par) => parallelBatches(0 until length iterator, par) { idx => (idx, similarIndexes(idx, minEst, minSim, f)) }
@@ -419,9 +432,9 @@ abstract class LSH { self =>
     }
   }
 
-  def rawSimilarItemsStream = new BulkQuery[Iterator[Sim]] {
+  val rawSimilarItemsStream = new BulkQuery[Iterator[Sim]] {
     def apply(minEst: Double, minSim: Double, f: SimFun) = {
-      if (isNegInf(minEst)) {
+      if (minEst == LSH.NoEstimate) {
         requireSimFun(f)
         rawStreamIndexes flatMap { idxs =>
           val res = collection.mutable.ArrayBuffer[Sim]()
@@ -469,7 +482,7 @@ abstract class LSH { self =>
     //      using some sort of merging cursor
 
     val rci = rawCandidateIndexes(sketchArray, idx)
-    val candidateCount = rci.iterator.map(_.length).sum
+    val candidateCount = sumLength(rci)
 
     if (candidateCount <= cfg.maxCandidates) {
       fastSparse.union(rci)
@@ -481,8 +494,17 @@ abstract class LSH { self =>
     }
   }
 
+  private def sumLength(xs: Array[Idxs]) = {
+    var sum, i = 0
+    while (i < xs.length) {
+      sum += xs(i).length
+      i += 1
+    }
+    sum
+  }
+
   protected def runLoop(idx: Int, candidates: Idxs, minEst: Double, minSim: Double, f: SimFun, res: IndexResultBuilder) =
-    if (isNegInf(minEst)) {
+    if (minEst == LSH.NoEstimate) {
       requireSimFun(f)
       runLoopNoEstimate(idx, candidates, minSim, f, res)
     } else {
@@ -521,7 +543,7 @@ abstract class LSH { self =>
     val comparisons = streamIndexes.map { idxs => (idxs.length - 1) * idxs.length / 2 } sum
     val ratio = 1.0 * length * cfg.maxCandidates / comparisons
 
-    if (isNegInf(minSim)) requireSimFun(f)
+    if (minSim == LSH.NoEstimate) requireSimFun(f)
 
     if (cfg.parallel) {
       val partialResults = new CopyOnWriteArrayList[Array[IndexResultBuilder]]()
@@ -567,7 +589,7 @@ abstract class LSH { self =>
   }
 
   protected def runTile(idxs: Idxs, ratio: Double, minEst: Double, minSim: Double, f: SimFun, res: Array[IndexResultBuilder]): Unit =
-    if (isNegInf(minEst)) {
+    if (minEst == LSH.NoEstimate) {
       runTileNoEstimate(idxs, ratio, minSim, f, res)
     } else {
       runTileYesEstimate(idxs, ratio, minEst, minSim, f, res)
@@ -631,7 +653,6 @@ abstract class LSH { self =>
       xs.map(f)
     }
 
-  protected def isNegInf(d: Double) = d == Double.NegativeInfinity
   protected def requireSimFun(f: SimFun) = require(f != null, "similarity function is required")
 
 }

@@ -24,7 +24,7 @@ class AllIndexResultBuilder(distinct: Boolean) extends IndexResultBuilder {
   def ++= (rb: IndexResultBuilder): Unit = rb match {
     case rb: AllIndexResultBuilder =>
       res ++= rb.res.result
-    case _ => ???
+    case _ => sys.error("this should never happen")
   }
   def result = if (distinct) ??? else res.result.map(x => Bits.unpackIntHi(x))
   def cursor = if (distinct) ??? else new Cursor2[Int, Float] {
@@ -53,7 +53,7 @@ class TopKIndexResultBuilder(k: Int, distinct: Boolean) extends IndexResultBuild
         createTopK()
         res ++= rb.res
       }
-    case _ => ???
+    case _ => sys.error("this should never happen")
   }
   def result = if (res == null) Array() else res.drainToArray()
   def cursor = { createTopK() ; res.cursor.swap }
