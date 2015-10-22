@@ -1,6 +1,6 @@
 package atrox.sketch
 
-import atrox.{ fastSparse, IntFreqMap, IntSet, Bits }
+import atrox.{ fastSparse, IntFreqMap, IntSet, Bits, Cursor2 }
 import java.util.concurrent.{ CopyOnWriteArrayList, ThreadLocalRandom }
 import java.lang.Math.{ pow, log, max, min }
 import scala.util.hashing.MurmurHash3
@@ -393,23 +393,25 @@ abstract class LSH { self =>
     }
   }
 
+  protected def _similar(sketch: SketchArray, skidx: Int, idx: Int, minEst: Double, minSim: Double, f: SimFun): IndexResultBuilder = {
+    val candidates = selectCandidates(sketch, skidx)
+    val res = newIndexResultBuilder()
+    runLoop(idx, candidates, minEst, minSim, f, res)
+    res
+  }
+
   // similarIndexes().toSet == (rawSimilarIndexes().distinct.toSet - idx)
-  def similarIndexes = new Query[Idxs] {
-    def apply(sketch: SketchArray, skidx: Int, idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs = {
-      val candidates = selectCandidates(sketch, skidx)
-      val res = newIndexResultBuilder()
-      runLoop(idx, candidates, minEst, minSim, f, res)
-      res.result
-    }
+  val similarIndexes = new Query[Idxs] {
+    def apply(sketch: SketchArray, skidx: Int, idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs =
+      _similar(sketch, skidx, idx, minEst, minSim, f).result
   }
 
   val similarItems = new Query[Iterator[Sim]] {
     def apply(sketch: SketchArray, skidx: Int, idx: Int, minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] = {
-      // Estimates and similarities are recomputed once more for similar items.
       if (cfg.orderByEstimate) require(minEst != LSH.NoEstimate, "For orderByEstimate to work estimation must not be disabled.")
       val ff = if (cfg.orderByEstimate) null else f
-      val simIdxs = similarIndexes(sketch, skidx, idx, minEst, minSim, ff)
-      indexesToSims(idx, simIdxs, f, isNegInf(minEst))
+      val simIdxs = _similar(sketch, skidx, idx, minEst, minSim, ff)
+      indexResultBuilderToSims(idx, simIdxs, f, minEst == LSH.NoEstimate)
     }
   }
 
@@ -417,17 +419,21 @@ abstract class LSH { self =>
     def apply(minEst: Double, minSim: Double, f: SimFun) =
       (cfg.compact, cfg.parallel) match {
         case (true, par) => parallelBatches(0 until length iterator, par) { idx => (idx, similarIndexes(idx, minEst, minSim, f)) }
-        case (false, _)  => _allSimilarIndexes_notCompact(minEst, minSim, f)
+        case (false, _)  => _allSimilar_notCompact(minEst, minSim, f) map { case (idx, res) => (idx, res.result) }
       }
   }
 
-  def allSimilarItems = new BulkQuery[Iterator[(Int, Iterator[Sim])]] {
+  val allSimilarItems = new BulkQuery[Iterator[(Int, Iterator[Sim])]] {
     def apply(minEst: Double, minSim: Double, f: SimFun) = {
-      if (cfg.orderByEstimate) require(minEst != LSH.NoEstimate, "For orderByEstimate to work estimation must not be disabled.")
-      val ff = if (cfg.orderByEstimate) null else f
-      val iter = allSimilarIndexes(minEst, minSim, ff)
-      parallelBatches(iter, cfg.parallel, batchSize = 256) { case (idx, simIdxs) =>
-        (idx, indexesToSims(idx, simIdxs, f, isNegInf(minEst)))
+      (cfg.compact, cfg.parallel) match {
+        case (true, par) => parallelBatches(0 until length iterator, par) { idx => (idx, similarItems(idx, minEst, minSim, f)) }
+        case (false, _)  =>
+          if (cfg.orderByEstimate) require(minEst != LSH.NoEstimate, "For orderByEstimate to work estimation must not be disabled.")
+          val ff = if (cfg.orderByEstimate) null else f
+          val iter = _allSimilar_notCompact(minEst, minSim, ff)
+          parallelBatches(iter, cfg.parallel, batchSize = 256) { case (idx, simIdxs) =>
+            (idx, indexResultBuilderToSims(idx, simIdxs, f, minEst == LSH.NoEstimate))
+          }
       }
     }
   }
@@ -537,7 +543,7 @@ abstract class LSH { self =>
   /** Needs to store all similar indexes in memory + some overhead, but it's
     * much faster, because it needs to do only half of iterations and accessed
     * data have better cache locality. */
-  protected def _allSimilarIndexes_notCompact(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, Idxs)] = {
+  protected def _allSimilar_notCompact(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, IndexResultBuilder)] = {
 
     // maxCandidates option is simulated via sampling
     val comparisons = streamIndexes.map { idxs => (idxs.length - 1) * idxs.length / 2 } sum
@@ -567,12 +573,12 @@ abstract class LSH { self =>
         }
       }
 
-      val idxsArr = new Array[Idxs](length)
+      val idxsArr = new Array[IndexResultBuilder](length)
       val pr = partialResults.toArray(Array[Array[IndexResultBuilder]]())
       (0 until length).par foreach { i =>
         val target = newIndexResultBuilder(distinct = true)
         for (p <- pr) target ++= p(i)
-        idxsArr(i) = target.result
+        idxsArr(i) = target
 
         for (p <- pr) p(i) = null
       }
@@ -583,7 +589,7 @@ abstract class LSH { self =>
       for (idxs <- streamIndexes) {
         runTile(idxs, ratio, minEst, minSim, f, res)
       }
-      Iterator.tabulate(length) { idx => (idx, res(idx).result) }
+      Iterator.tabulate(length) { idx => (idx, res(idx)) }
     }
 
   }
@@ -634,17 +640,54 @@ abstract class LSH { self =>
   protected def newIndexResultBuilder(distinct: Boolean = false, maxResults: Int = cfg.maxResults): IndexResultBuilder =
     IndexResultBuilder.make(distinct, maxResults)
 
-  protected def indexesToSims(idx: Int, simIdxs: Idxs, f: SimFun, noEstimates: Boolean) =
-    if (noEstimates) {
-      simIdxs.map { simIdx => Sim(idx, simIdx, 0.0, f(idx, simIdx)) }.iterator
-    } else {
+  /** This method converts the provided IndexResultBuilder to an iterator or Sim
+    * objects while using similarity measure that was used internally in the
+    * IRB for sorting and ordering. That way it's possible to avoid recomputing
+    * estimate/similarity in certain cases. These cases are when we don't need
+    * both similarity and it's estimate at the same time. Drawback is the fact
+    * that the IRB is internally using float instead of double and therefore
+    * the result might have sligtly lower accuracy. */
+  protected def indexResultBuilderToSims(idx: Int, irb: IndexResultBuilder, f: SimFun, noEstimates: Boolean): Iterator[Sim] =
+    if (noEstimates && f != null) {
+      mkSims(irb) { (cur, res) =>
+        while (cur.moveNext()) {
+          res += Sim(idx, cur.key, 0.0, cur.value)
+        }
+      }
+
+    } else if (!noEstimates && f == null) {
+      mkSims(irb) { (cur, res) =>
+        while (cur.moveNext()) {
+          res += Sim(idx, cur.key, cur.value, cur.value)
+        }
+      }
+
+    } else if (!noEstimates && f != null && cfg.orderByEstimate) {
+      mkSims(irb) { (cur, res) =>
+        while (cur.moveNext()) {
+          res += Sim(idx, cur.key, cur.value, f(idx, cur.key))
+        }
+      }
+
+    } else if (!noEstimates && f != null) {
       val sketch = requireSketchArray
-      simIdxs.map { simIdx =>
-        val est = estimator.estimateSimilarity(sketch, idx, sketch, simIdx)
-        val sim = if (f == null) est else f(idx, simIdx)
-        Sim(idx, simIdx, est, sim)
-      }.iterator
+      mkSims(irb) { (cur, res) =>
+        while (cur.moveNext()) {
+          val est = estimator.estimateSimilarity(sketch, idx, sketch, cur.key)
+          res += Sim(idx, cur.key, est, cur.value)
+        }
+      }
+    } else {
+      sys.error("this should not happen")
     }
+
+  protected def mkSims(irb: IndexResultBuilder)(f: (Cursor2[Int, Float], ArrayBuilder.ofRef[Sim]) => Unit): Iterator[Sim] = {
+    val cur = irb.cursor
+    val res = new ArrayBuilder.ofRef[Sim]
+    res.sizeHint(irb.size)
+    f(cur, res)
+    res.result.iterator
+  }
 
   protected def parallelBatches[T, U](xs: Iterator[T], inParallel: Boolean, batchSize: Int = 1024)(f: T => U): Iterator[U] =
     if (inParallel) {

@@ -12,6 +12,7 @@ object IndexResultBuilder {
 }
 
 trait IndexResultBuilder {
+  def size: Int
   def += (idx: Int, sim: Double): Unit
   def ++= (rb: IndexResultBuilder): Unit
   def result: Array[Int]
@@ -20,15 +21,28 @@ trait IndexResultBuilder {
 
 class AllIndexResultBuilder(distinct: Boolean) extends IndexResultBuilder {
   private val res = new collection.mutable.ArrayBuilder.ofLong
-  def += (idx: Int, sim: Double): Unit = res += Bits.pack(hi = idx, lo = sim.toFloat)
+  private var _size = 0
+
+  def size = _size
+
+  def += (idx: Int, sim: Double): Unit = {
+    res += Bits.pack(hi = idx, lo = sim.toFloat)
+    _size += 1
+  }
   def ++= (rb: IndexResultBuilder): Unit = rb match {
     case rb: AllIndexResultBuilder =>
-      res ++= rb.res.result
+      val xs = rb.res.result
+      res ++= xs
+      _size += xs.length
     case _ => sys.error("this should never happen")
   }
-  def result = if (distinct) ??? else res.result.map(x => Bits.unpackIntHi(x))
-  def cursor = if (distinct) ??? else new Cursor2[Int, Float] {
-    private val arr = res.result
+
+  def result = {
+    val arr = if (distinct) res.result.distinct else res.result
+    arr.map(x => Bits.unpackIntHi(x))
+  }
+  def cursor = new Cursor2[Int, Float] {
+    private val arr = if (distinct) res.result.distinct else res.result
     private var pos = -1
 
     def moveNext() = {
@@ -43,6 +57,9 @@ class AllIndexResultBuilder(distinct: Boolean) extends IndexResultBuilder {
 class TopKIndexResultBuilder(k: Int, distinct: Boolean) extends IndexResultBuilder {
   private var res: atrox.TopKFloatInt = null // top-k is allocated only when it's needed
   private def createTopK() = if (res == null) res = new atrox.TopKFloatInt(k, distinct)
+
+  def size = if (res == null) 0 else res.size
+
   def += (idx: Int, sim: Double): Unit = {
     createTopK()
     res.insert(sim.toFloat, idx)
@@ -55,6 +72,7 @@ class TopKIndexResultBuilder(k: Int, distinct: Boolean) extends IndexResultBuild
       }
     case _ => sys.error("this should never happen")
   }
+
   def result = if (res == null) Array() else res.drainToArray()
   def cursor = { createTopK() ; res.cursor.swap }
 }
