@@ -500,7 +500,7 @@ object BitSketch {
     for (component <- 0 until sk.sketchLength by n) {
       val slice = sk.slice(component, component+n)
       for (itemIdx <- 0 until sk.length) {
-        slice.writeSketchFragment(itemIdx, 0, sk.sketchLength, sketchArray, itemIdx * sk.sketchLength + component)
+        slice.writeSketchFragment(itemIdx, 0, n, sketchArray, itemIdx * sk.sketchLength + component)
       }
     }
     sketchArray
@@ -538,7 +538,7 @@ case class BitSketch(
     while (j < to) {
       val ii = itemIdx * bitsPerSketch + j
       val bit = (sketchArray(ii / 64) >>> (ii % 64)) & 1L
-      dest(i / 64) = bit << (i % 64)
+      dest(i / 64) |= bit << (i % 64)
       i += 1
       j += 1
     }
