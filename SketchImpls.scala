@@ -1,7 +1,7 @@
 package atrox.sketch
 
 import scala.language.postfixOps
-import breeze.linalg.{ SparseVector, DenseVector, DenseMatrix, BitVector, normalize, Vector => bVector }
+import breeze.linalg.{ SparseVector, DenseVector, DenseMatrix, BitVector, normalize, Vector => bVector, operators }
 import breeze.stats.distributions.Rand
 import java.lang.System.arraycopy
 import java.lang.Long.{ bitCount, rotateLeft }
@@ -115,41 +115,46 @@ object SingleBitMinHash {
 
 object RandomHyperplanes {
 
-  def sketching(items: Seq[bVector[Double]], n: Int): BitSketching =
+
+  def sketching[V <: { def size: Int }](items: Seq[V], n: Int)(implicit ev: CanDot[V]): BitSketching =
     new BitSketchingOf(items, n, i => mkSketcher(items.head.size, (i+1) * 1000), Estimator(n))
 
-  def apply(items: Seq[bVector[Double]], n: Int): BitSketch = {
+  def apply[V <: { def size: Int }](items: Seq[V], n: Int)(implicit ev: CanDot[V]): BitSketch = {
     require(n % 64 == 0, "sketch length muse be divisible by 64 (for now)")
     BitSketch.make(sketching(items, n), Estimator(n), componentsAtOnce = 1)
   }
 
-
   def apply(rowMatrix: DenseMatrix[Double], n: Int): BitSketch =
-    apply(0 until rowMatrix.rows map { r => rowMatrix(r, ::).t }, n)
+    apply(0 until rowMatrix.rows map { r => rowMatrix(r, ::).t }, n)(CanDotDouble)
 
 
-  def floats(items: Seq[bVector[Float]], n: Int): BitSketch = {
-    val sk = new BitSketchingOf(items, n, i => mkSketcherFloat(items.head.size, (i+1) * 1000), Estimator(n))
-    BitSketch.make(sk, Estimator(n), componentsAtOnce = 1)
+  trait CanDot[InVec] {
+    type RndVec
+    def makeRandomHyperplane(length: Int, seed: Int): RndVec
+    def dot(a: InVec, b: RndVec): Double
   }
 
-  def floats(rowMatrix: DenseMatrix[Float], n: Int): BitSketch =
-    floats(0 until rowMatrix.rows map { r => rowMatrix(r, ::).t }, n)
+  implicit def CanDotFloat[V](implicit dotf: operators.OpMulInner.Impl2[V, DenseVector[Float], Float]) = new CanDot[V] {
+    type RndVec = DenseVector[Float]
+    def makeRandomHyperplane(length: Int, seed: Int): RndVec = mkRandomHyperplane(length, seed) mapValues (_.toFloat)
+    def dot(a: V, b: DenseVector[Float]): Double = dotf(a, b).toDouble
+  }
+
+  implicit def CanDotDouble[V](implicit dotf: operators.OpMulInner.Impl2[V, DenseVector[Double], Double]) = new CanDot[V] {
+    type RndVec = DenseVector[Double]
+    def makeRandomHyperplane(length: Int, seed: Int): RndVec = mkRandomHyperplane(length, seed)
+    def dot(a: V, b: DenseVector[Double]): Double = dotf(a, b)
+  }
 
 
-  private def mkRandomHyperplane(length: Int, seed: Int) = {
+  private def mkSketcher[V](length: Int, seed: Int)(implicit ev: CanDot[V]): BitSketcher[V] = new BitSketcher[V] {
+    private val rand = ev.makeRandomHyperplane(length, seed)
+    def apply(item: V) = ev.dot(item, rand) > 0.0
+  }
+
+  private def mkRandomHyperplane(length: Int, seed: Int): DenseVector[Double] = {
     val rand = new scala.util.Random(seed)
     DenseVector.fill[Double](length)(if (rand.nextDouble < 0.5) -1.0 else 1.0)
-  }
-
-  private def mkSketcher(length: Int, seed: Int) = new BitSketcher[bVector[Double]] {
-    private val rand = mkRandomHyperplane(length, seed)
-    def apply(item: bVector[Double]) = (rand dot item) > 0.0
-  }
-
-  private def mkSketcherFloat(length: Int, seed: Int) = new BitSketcher[bVector[Float]] {
-    private val rand = mkRandomHyperplane(length, seed) mapValues (_.toFloat)
-    def apply(item: bVector[Float]) = (rand dot item) > 0.0
   }
 
   case class Estimator(sketchLength: Int) extends BitEstimator {
