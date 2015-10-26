@@ -403,14 +403,18 @@ object Bits {
 
   /** Extract up to 64 bits from a long array. Bits may span two neighbouring
     * array elements. If requested bits overrun length of the array, exception
-    * is thrown. Which means `bit` arument must be at less than
+    * is thrown. Which means `bit` arument must be less or equal than
     * `arr.length * 64 - bitLen` */
   def getBitsOverlapping(arr: Array[Long], bit: Int, bitLen: Int): Long = {
     val startbit = bit
     val mask = (1 << bitLen) - 1
 
-    ((arr(startbit / 64) >>> (startbit % 64)) & mask) |
-    ((arr((startbit+bitLen) / 64) << (64 - startbit % 64)) & mask)
+    if (startbit+bitLen == arr.length * 64) {
+      ((arr(startbit / 64) >>> (startbit % 64)) & mask)
+    } else {
+      ((arr(startbit / 64) >>> (startbit % 64)) & mask) |
+      ((arr((startbit+bitLen) / 64) << (64 - startbit % 64)) & mask)
+    }
   }
 
 
