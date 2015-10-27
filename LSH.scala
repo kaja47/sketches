@@ -338,6 +338,7 @@ abstract class LSH { self =>
     def apply(idx: Int, minEst: Double): Res = apply(idx, minEst, 0.0, null)
     def apply(idx: Int): Res = apply(idx, 0.0, 0.0, null)
     def apply(idx: Int, f: SimFun): Res = apply(idx, LSH.NoEstimate, 0.0, f)
+    def apply(idx: Int, minSim: Double, f: SimFun): Res = apply(idx, LSH.NoEstimate, minSim, f)
   }
 
   trait BulkQuery[Res] {
@@ -345,6 +346,8 @@ abstract class LSH { self =>
     def apply(minEst: Double): Res = apply(minEst, 0.0, null)
     def apply(): Res = apply(0.0, 0.0, null)
     def apply(f: SimFun): Res = apply(LSH.NoEstimate, 0.0, f)
+    def apply(minSim: Double, f: SimFun): Res = apply(LSH.NoEstimate, minSim, f)
+
   }
 
   // =====
