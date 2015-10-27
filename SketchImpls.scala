@@ -11,7 +11,7 @@ import java.util.Arrays
 object MinHash {
 
   def sketching[Item](sets: Seq[Item], n: Int)(implicit mk: HashFunc[Int] => MinHasher[Item]): IntSketching =
-    new IntSketchingOf(sets, n, i => mk(randomHashFunction(i * 1000)), Estimator(n))
+    new IntSketchingOf(sets, n, i => mk(HashFunc.random(i * 1000)), Estimator(n))
 
   def apply[Item](sets: Seq[Item], n: Int)(implicit mk: HashFunc[Int] => MinHasher[Item]): IntSketch =
     IntSketch.make(sketching(sets, n), Estimator(n), componentsAtOnce = n)
@@ -46,19 +46,6 @@ object MinHash {
     }
   }
 
-
-  def randomHashFunction(seed: Int, randomBits: Int = 32): HashFunc[Int] = {
-    val rand = new scala.util.Random(seed)
-    new HashFunc[Int] {
-      private[this] val M = randomBits
-      private[this] val a: Long = (rand.nextLong() & ((1L << 62)-1)) * 2 + 1       // random odd positive integer (a < 2^w)
-      private[this] val b: Long = math.abs(rand.nextLong() & ((1L << (64 - M))-1)) // random non-negative integer (b < 2^(w-M)
-      def apply(x: Int): Int = ((a*x+b) >>> (64-M)).toInt
-
-      override def toString = s"HashFunc: f(x) = (${a}L * x + ${b}L) >>> ${64-M}"
-    }
-  }
-
   case class Estimator(sketchLength: Int) extends IntEstimator {
     def estimateSimilarity(sameBits: Int): Double =
       sameBits.toDouble / sketchLength
@@ -79,10 +66,10 @@ object MinHash {
   * are hashed into few buckets. Investigation pending.
   * https://www.endgame.com/blog/minhash-vs-bitwise-set-hashing-jaccard-similarity-showdown */
 object SingleBitMinHash {
-  import MinHash.{ MinHasher, randomHashFunction }
+  import MinHash.MinHasher
 
   def sketching[Item](sets: Seq[Item], n: Int)(implicit mk: HashFunc[Int] => MinHasher[Item]): BitSketching =
-    new BitSketchingOf(sets, n, (i: Int) => SingleBitMinHasher(mk(randomHashFunction(i * 1000))), mkEstimator(n))
+    new BitSketchingOf(sets, n, (i: Int) => SingleBitMinHasher(mk(HashFunc.random(i * 1000))), mkEstimator(n))
 
   def apply[Item](sets: Seq[Item], n: Int)(implicit mk: HashFunc[Int] => MinHasher[Item]): BitSketch =
     BitSketch.make(sketching(sets, n), mkEstimator(n), componentsAtOnce = n)

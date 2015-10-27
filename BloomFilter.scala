@@ -54,7 +54,7 @@ class BloomFilter[@scala.specialized(Int, Long) T](val hashFunctions: Int, val b
     fs(i)(elemHashCode(x))
 
   protected val fs =
-    Array.tabulate[HashFunc[Int]](hashFunctions)(i => MinHash.randomHashFunction(i * 4747))
+    Array.tabulate[HashFunc[Int]](hashFunctions)(i => HashFunc.random(i * 4747))
 
   def += (x: T): this.type = add(x)
   def apply(x: T) = contains(x)
