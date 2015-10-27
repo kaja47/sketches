@@ -35,11 +35,11 @@ object MinHash {
     }
   }
 
-  implicit class GeneralMinHasher(f: HashFunc[Int]) extends MinHasher[Traversable[Int]] {
-    def apply(set: Traversable[Int]): Int = {
+  implicit class GeneralMinHasher[T](f: HashFunc[Int]) extends MinHasher[Traversable[T]] {
+    def apply(set: Traversable[T]): Int = {
       var min = Int.MaxValue
       for (el <- set) {
-        val h = f(el)
+        val h = f(el.hashCode)
         if (h < min) { min = h }
       }
       min
