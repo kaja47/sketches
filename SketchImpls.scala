@@ -60,6 +60,57 @@ object MinHash {
 
 
 
+/** based on https://www.sumologic.com/2015/10/22/rapid-similarity-search-with-weighted-min-hash/ */
+object WeightedMinHash {
+
+  def sketching[Item, W](sets: Seq[Item], weights: W, n: Int)(implicit mk: ((HashFunc[Int], W)) => WeightedMinHasher[Item]): IntSketching =
+    new IntSketchingOf(sets, n, i => mk(HashFunc.random(i * 1000), weights), MinHash.Estimator(n))
+
+  def apply[Item, W](sets: Seq[Item], weights: W, n: Int)(implicit mk: ((HashFunc[Int], W)) => WeightedMinHasher[Item]): IntSketch =
+    IntSketch.make(sketching(sets, weights, n), MinHash.Estimator(n), componentsAtOnce = n)
+
+
+  /** applies one function to every element of one set and reduces it to minumum */
+  trait WeightedMinHasher[-T] extends IntSketcher[T] {
+    def apply(t: T): Int
+  }
+
+  implicit class IntArrayMinHasher(fw: (HashFunc[Int], Array[Int])) extends WeightedMinHasher[Array[Int]] {
+    val (f, weights) = fw
+    def apply(set: Array[Int]): Int = {
+      var min = Int.MaxValue
+      var j = 0 ; while (j < set.length) {
+        var h = set(j)
+        var i = 0 ; while (i < weights(j)) {
+          h = f(h)
+          if (h < min) { min = h }
+          i += 1
+        }
+        j += 1
+      }
+      min
+    }
+  }
+
+  implicit class GeneralMinHasher[T](fw: (HashFunc[Int], Map[T, Int])) extends WeightedMinHasher[Traversable[T]] {
+    val (f, weights) = fw
+    def apply(set: Traversable[T]): Int = {
+      var min = Int.MaxValue
+      for (el <- set) {
+        var h = el.hashCode
+        for (_ <- 0 until weights(el)) {
+          h = f(h)
+          if (h < min) { min = h }
+        }
+      }
+      min
+    }
+  }
+
+}
+
+
+
 /** MinHash that uses only one bit. It's much faster than traditional MinHash
   * but it seems it's less precise.
   * As of right now it's not really suitable for LSH, because most elements
