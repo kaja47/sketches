@@ -159,7 +159,7 @@ class StringSet(initialCapacity: Int = 1024, loadFactor: Double = 0.45)
 
 
 
-abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor: Double = 0.45, sl: Int) {
+abstract class StringDictionaryBase(initialCapacity: Int = 1024, val loadFactor: Double = 0.45, sl: Int) extends Serializable {
   require(loadFactor > 0 && loadFactor < 1, "load factor must be in range from 0 to 1 (exclusive)")
 
   protected def segmentLength: Int

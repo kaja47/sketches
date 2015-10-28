@@ -5,7 +5,7 @@ package atrox
   * mapping. Therefore it's possible to lookup values by keys and keys by
   * values. But by nature how data are stored (inlined or packed in one big
   * char array), every lookup by value alocates new string object. */
-sealed class StringIndex(initialCapacity: Int = 1024) {
+sealed class StringIndex(initialCapacity: Int = 1024) extends Serializable {
   class SID(initialCapacity: Int) extends StringIntDictionary(initialCapacity = initialCapacity) {
     var max = 0
     var arrTop = 0
