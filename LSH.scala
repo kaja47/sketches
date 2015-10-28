@@ -44,7 +44,7 @@ case class LSHBuildCfg(
 
 case class LSHCfg(
   /** Size of the biggest bucket that will be used for selecting candidates.
-    * Elimitating huge buckets will not harm recall very much, because they
+    * Eliminating huge buckets will not harm recall very much, because they
     * might be result of some hashing anomaly and their items are with high
     * probability present in another bucket. */
   maxBucketSize: Int = Int.MaxValue,
@@ -649,7 +649,7 @@ abstract class LSH { self =>
     * estimate/similarity in certain cases. These cases are when we don't need
     * both similarity and it's estimate at the same time. Drawback is the fact
     * that the IRB is internally using float instead of double and therefore
-    * the result might have sligtly lower accuracy. */
+    * the result might have slightly lower accuracy. */
   protected def indexResultBuilderToSims(idx: Int, irb: IndexResultBuilder, f: SimFun, noEstimates: Boolean): Iterator[Sim] =
     if (noEstimates && f != null) {
       mkSims(irb) { (cur, res) =>
