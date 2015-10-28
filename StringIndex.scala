@@ -30,8 +30,8 @@ sealed class StringIndex(initialCapacity: Int = 1024) {
         }
 
         arrTop += 2
+        max += 1
       }
-      max += 1
       idx
     }
 
