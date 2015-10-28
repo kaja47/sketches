@@ -8,10 +8,10 @@ import java.util.Arrays
 
 
 /** Class StringIntDictionary implements idiosyncratic map with string keys and
-  * int values. This map is specialized to hold english words and other short
+  * int values. This map is specialized to hold English words and other short
   * alphanumeric strings as it's keys. Strings shorter than 10 characters are
   * compressed and inlined into associative part of the map. Long strings (up to
-  * 255 characters) are stored in a one continuous char arraym reducing overhead
+  * 255 characters) are stored in a one continuous char array reducing overhead
   * of object headers a and internal string structure. Consequence of this
   * layout is compactness of the StringIntDictionary and very good cache
   * behavior. Lookup of inlined string needs only 1 memory access and lookup of
@@ -31,7 +31,7 @@ import java.util.Arrays
   * but if it no loger fits into cache, lookup can be up to 3 times faster.
   * But when string hashes starts to collide, performance degenerate very quickly.
   *
-  * Warning: Might contains subtle and not-so-soubtle errors.
+  * Warning: Might contains subtle and not-so-subtle errors.
   */
 class StringIntDictionary(initialCapacity: Int = 1024, loadFactor: Double = 0.45)
     extends StringDictionaryBase(initialCapacity, loadFactor, 3) {

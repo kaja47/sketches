@@ -1,7 +1,7 @@
 ## Sketches
 
-*Sketches* is a library for sketching, locality sensitive hashing and
-approximate similarity search.
+*Sketches* is a library for sketching, locality sensitive hashing,
+approximate similarity search and other things.
 
 ### Usage
 
