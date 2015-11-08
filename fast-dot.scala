@@ -219,7 +219,7 @@ object fastSparse {
 
 
   def possibleSetOverlap(a: Array[Int], b: Array[Int]) =
-    !(a(a.length - 1) < b(0) || b(b.length - 1) < a(0))
+    a.length != 0 && b.length != 0 && !(a(a.length - 1) < b(0) || b(b.length - 1) < a(0))
 
 
   def weightedIntersectionSize(a: Array[Int], b: Array[Int], ws: Array[Double]): Double = {
