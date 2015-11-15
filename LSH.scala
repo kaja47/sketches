@@ -294,7 +294,6 @@ object LSH {
 abstract class LSH { self =>
   type SketchArray
   type Sketching <: atrox.sketch.Sketching[T] forSome { type T <: SketchArray}
-  type Sketch <: atrox.sketch.Sketch[T] forSome { type T <: SketchArray}
   type Idxs = Array[Int]
   type SimFun = (Int, Int) => Double
 
@@ -718,7 +717,6 @@ final case class IntLSH(
 
   type SketchArray = Array[Int]
   type Sketching = IntSketching
-  type Sketch = IntSketch
 
   def withConfig(newCfg: LSHCfg): IntLSH = copy(cfg = newCfg)
 
@@ -751,7 +749,6 @@ final case class BitLSH(
 
   type SketchArray = Array[Long]
   type Sketching = BitSketching
-  type Sketch = BitSketch
 
   def withConfig(newCfg: LSHCfg): BitLSH = copy(cfg = newCfg)
 
