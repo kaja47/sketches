@@ -435,6 +435,11 @@ class TopKFloatInt(k: Int, distinct: Boolean = false) extends BaseMinFloatIntHea
     }
   }
 
+  /** Scanning the whole heap is faster than search in a auxiliary set for
+    * reasonable small heaps (and consume dramatically less mememory). This is
+    * caused by the fact that search in the auxiliary set needs two dependent
+    * dereferences which most likely lead to cache misses. When scanning costs
+    * more than those 2 misses, it's preferable to use the auxiliary set. */
   protected def _containsValue(value: Int): Boolean = {
     var i = 0 ; while (i < top) {
       if (low(arr(i)) == value) return true
