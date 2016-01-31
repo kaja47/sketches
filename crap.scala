@@ -498,9 +498,9 @@ class MinFloatIntHeap(capacity: Int) extends BaseMinFloatIntHeap(capacity) {
 }
 
 abstract class BaseMinFloatIntHeap(capacity: Int) extends BaseMinIntIntHeap(capacity) {
-  def _insertFloat(key: Float, value: Int) = _insert(Bits.floatToSortableInt(key), value)
-  def _minKeyFloat: Float = Bits.sortableIntToFloat(_minKey)
-  def _deleteMinAndInsertFloat(key: Float, value: Int) = _deleteMinAndInsert(Bits.floatToSortableInt(key), value)
+  protected def _insertFloat(key: Float, value: Int) = _insert(Bits.floatToSortableInt(key), value)
+  protected def _minKeyFloat: Float = Bits.sortableIntToFloat(_minKey)
+  protected def _deleteMinAndInsertFloat(key: Float, value: Int) = _deleteMinAndInsert(Bits.floatToSortableInt(key), value)
 }
 
 
@@ -509,6 +509,25 @@ class MinIntIntHeap(capacity: Int) extends BaseMinIntIntHeap(capacity) {
   def minKey: Int = _minKey
   def minValue: Int = _minValue
   def deleteMinAndInsert(key: Int, value: Int) = _deleteMinAndInsert(key, value)
+}
+
+object MinIntIntHeap {
+  def builder(capacity: Int) = new MinIntIntHeapBuilder(capacity)
+}
+
+class MinIntIntHeapBuilder(capacity: Int) {
+  private[this] var heap = new MinIntIntHeap(capacity)
+
+  def insert(key: Int, value: Int) =
+    heap._insertNoSwim(key, value)
+
+  def result = {
+    require(heap != null, "MinIntIntHeapBuilder cannot be reused")
+    heap.makeHeap()
+    val res = heap
+    heap = null
+    res
+  }
 }
 
 abstract class BaseMinIntIntHeap(val capacity: Int) {
@@ -523,14 +542,25 @@ abstract class BaseMinIntIntHeap(val capacity: Int) {
   def isEmpty = top == (0)
   def nonEmpty = top != (0)
 
+  protected[atrox] def _insertNoSwim(key: Int, value: Int): Unit = {
+    arr(top) = pack(key, value)
+    top += 1
+  }
+
   protected def _insert(key: Int, value: Int): Unit = {
     arr(top) = pack(key, value)
     swim(top)
     top += 1
   }
 
-  protected def _minKey: Int = high(arr(0))
-  protected def _minValue: Int = low(arr(0))
+  protected def _minKey: Int = {
+    if (top == 0) throw new NoSuchElementException
+    high(arr(0))
+  }
+  protected def _minValue: Int = {
+    if (top == 0) throw new NoSuchElementException
+    low(arr(0))
+  }
 
   def deleteMin(): Unit = {
     if (top == 0) throw new NoSuchElementException("underflow")
@@ -592,6 +622,21 @@ abstract class BaseMinIntIntHeap(val capacity: Int) {
     }
     arr(pos) = key
   }
+
+  protected[atrox] def makeHeap() = {
+    var i = capacity/2-1
+    while (i >= 0) {
+      sink(i)
+      i -= 1
+    }
+  }
+
+  private def isValidHeap =
+    0 until capacity forall { i =>
+      val ch = child(i)
+      (ch   >= capacity || arr(ch)   >= arr(i)) &&
+      (ch+1 >= capacity || arr(ch+1) >= arr(i))
+    }
 
 }
 
