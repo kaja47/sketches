@@ -610,13 +610,11 @@ abstract class BaseMinIntIntHeap(val capacity: Int) {
     var pos = _pos
     while (child(pos) < top) {
       var ch = child(pos)
-      if (ch < (top - 1) && arr(ch) > arr(ch+1)) ch += 1
-//      if (arr(pos) <= arr(ch)) return
+      if ((ch+1) < top && arr(ch+1) < arr(ch)) ch += 1
       if (key <= arr(ch)) {
         arr(pos) = key
         return
       }
-//      swap(pos, ch)
       arr(pos) = arr(ch)
       pos = ch
     }
