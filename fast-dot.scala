@@ -295,17 +295,19 @@ object fastSparse {
 
 
   private def _initUnion(sets: Array[Array[Int]]): (MinIntIntHeap, Array[Int]) = {
-    val heap = new MinIntIntHeap(sets.length)
+    val heap = MinIntIntHeap.builder(sets.length)
     val positions = new Array[Int](sets.length)
 
-    for (i <- 0 until sets.length) {
-      if (positions(i) < sets(i).length)  {
+    var i = 0
+    while (i < sets.length) {
+      if (sets(i).length > 0)  {
         heap.insert(sets(i)(0), i)
         positions(i) += 1
       }
+      i += 1
     }
 
-    (heap, positions)
+    (heap.result, positions)
   }
 
 
