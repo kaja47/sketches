@@ -116,11 +116,12 @@ object RadixSort {
 
   protected def checkPreconditions[T](arr: Array[T], scratch: Array[T], from: Int, to: Int, fromByte: Int, toByte: Int, maxBytes: Int) = {
     require(to <= scratch.length)
+    require(to <= arr.length)
+    require(from >= 0)
+    require(to >= 0)
     require(fromByte < toByte)
     require(fromByte >= 0 && fromByte < maxBytes)
     require(toByte > 0 && toByte <= maxBytes)
-    require(from >= 0)
-    require(to <= arr.length)
   }
 
 
