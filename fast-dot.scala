@@ -393,6 +393,30 @@ object fastSparse {
   }
 
 
+  def renumberSetsByFrequency(sets: Array[Array[Int]]): Array[Array[Int]] = {
+
+    var max = -1
+    var i = 0; while (i < sets.length) {
+      max = math.max(max, sets(i)(sets(i).length-1))
+      i += 1
+    }
+
+    val counts = new Array[Int](max+1)
+    for (set <- sets; x <- set) counts(x) += 1
+
+    var trx = Array.range(0, max+1).sortBy(idx => counts(idx))
+
+    sets.map { set =>
+      val arr = new Array[Int](set.length)
+      var i = 0 ; while (i < arr.length) {
+        arr(i) = trx(set(i))
+        i += 1
+      }
+      makeSet(arr)
+    }
+  }
+
+
 }
 
 
