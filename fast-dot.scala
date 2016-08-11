@@ -77,13 +77,13 @@ object fastSparse {
   /** Prepare integer array to be used by set functions in the fastSparse
     * module - ie. values are distinct and increasing. This method might return
     * the new array or modify the old array. */
-  def makeSet[@specialized(Int, Long, Float, Double) T](arr: Array[T])(implicit rel: Rel[T]): Array[T] = {
+  def makeSet[@specialized(Int, Long) T](arr: Array[T])(implicit rel: Rel[T]): Array[T] = {
     rel.sort(arr)
     if (isDistinctIncreasingArray(arr)) arr
     else arr.distinct
   }
 
-  def isDistinctIncreasingArray[@specialized(Int, Long, Float, Double) T](arr: Array[T])(implicit rel: Rel[T]): Boolean = {
+  def isDistinctIncreasingArray[@specialized(Int, Long) T](arr: Array[T])(implicit rel: Rel[T]): Boolean = {
     if (arr.length <= 1) return true
 
     var last = arr(0)
@@ -97,7 +97,7 @@ object fastSparse {
     true
   }
 
-  def isIncreasingArray[@specialized(Int, Long, Float, Double) T](arr: Array[T])(implicit rel: Rel[T]): Boolean = {
+  def isIncreasingArray[@specialized(Int, Long) T](arr: Array[T])(implicit rel: Rel[T]): Boolean = {
     if (arr.length <= 1) return true
 
     var last = arr(0)
@@ -112,15 +112,15 @@ object fastSparse {
   }
 
 
-  /** arguments must be sorted arrays */
-  def intersectionSize[@specialized(Int, Long, Float, Double) T](a: Array[T], b: Array[T])(implicit rel: Rel[T]): Int = {
+  /** arguments must be sets represented as sorted arrays */
+  def intersectionSize(a: Array[Int], b: Array[Int]): Int = {
     var size, ai, bi = 0
-    while (ai != a.length && bi != b.length) {
+    while (ai < a.length && bi < b.length) {
       val av = a(ai)
       val bv = b(bi)
-      size += (if (rel.eq (av, bv)) 1 else 0)
-      ai   += (if (rel.lte(av, bv)) 1 else 0)
-      bi   += (if (rel.gte(av, bv)) 1 else 0)
+      size += (if (av == bv) 1 else 0)
+      ai   += (if (av <= bv) 1 else 0)
+      bi   += (if (av >= bv) 1 else 0)
     }
     size
   }
@@ -129,7 +129,7 @@ object fastSparse {
   /** This method tried to look ahead and skip some unnecessary iterations. In
     * some cases it can be faster than straightforward code, but it's rarely
     * slower. */
-  def intersectionSizeWithSkips[@specialized(Int, Long, Float, Double) T](a: Array[T], b: Array[T], skip: Int)(implicit rel: Rel[T]): Int = {
+  def intersectionSizeWithSkips[@specialized(Int, Long) T](a: Array[T], b: Array[T], skip: Int)(implicit rel: Rel[T]): Int = {
     var size, ai, bi = 0
 
     val alen = a.length - skip
@@ -156,35 +156,35 @@ object fastSparse {
     size
   }
 
-  def unionSize[@specialized(Int, Long, Float, Double) T](a: Array[T], b: Array[T])(implicit rel: Rel[T]): Int =
+  def unionSize(a: Array[Int], b: Array[Int]): Int =
     a.length + b.length - intersectionSize(a, b)
 
   /** result = |a -- b| */
-  def diffSize[@specialized(Int, Long, Float, Double) T](a: Array[T], b: Array[T])(implicit rel: Rel[T]): Int =
+  def diffSize(a: Array[Int], b: Array[Int]): Int =
     a.length - intersectionSize(a, b)
 
 
-  def intersectionAndUnionSize[@specialized(Int, Long, Float, Double) T](a: Array[T], b: Array[T])(implicit rel: Rel[T]): (Int, Int) = {
+  def intersectionAndUnionSize(a: Array[Int], b: Array[Int]): (Int, Int) = {
     val is = intersectionSize(a, b)
     (is, a.length + b.length - is)
   }
 
-  def jaccardSimilarity[@specialized(Int, Long, Float, Double) T](a: Array[T], b: Array[T])(implicit rel: Rel[T]): Double = {
+  def jaccardSimilarity(a: Array[Int], b: Array[Int]): Double = {
     val is = intersectionSize(a, b)
     val un = a.length + b.length - is
     if (un == 0) 0 else is.toDouble / un
   }
 
 
-  def union[@specialized(Int, Long, Float, Double) T: ClassTag](a: Array[T], b: Array[T])(implicit rel: Rel[T]): Array[T] = {
-    val res = new Array[T](unionSize(a, b))
+  def union(a: Array[Int], b: Array[Int]): Array[Int] = {
+    val res = new Array[Int](unionSize(a, b))
     var i, ai, bi = 0
     while (ai != a.length && bi != b.length) {
       val av = a(ai)
       val bv = b(bi)
-      res(i) = (if (rel.gt (av, bv)) bv else av)
-      ai    += (if (rel.lte(av, bv)) 1 else 0)
-      bi    += (if (rel.gte(av, bv)) 1 else 0)
+      res(i) = (if (av >  bv) bv else av)
+      ai    += (if (av <= bv) 1 else 0)
+      bi    += (if (av >= bv) 1 else 0)
       i += 1
     }
 
@@ -204,20 +204,20 @@ object fastSparse {
   }
 
 
-  def intersection[@specialized(Int, Long, Float, Double) T: ClassTag](a: Array[T], b: Array[T])(implicit rel: Rel[T]): Array[T] = {
-    val res = new Array[T](intersectionSize(a, b))
+  def intersection(a: Array[Int], b: Array[Int]): Array[Int] = {
+    val res = new Array[Int](intersectionSize(a, b))
     var i, ai, bi = 0
     while (ai != a.length && bi != b.length) {
       val av = a(ai)
       val bv = b(bi)
 
-      if (rel.eq(av, bv)) {
+      if (av == bv) {
         res(i) = av
         i += 1
       }
 
-      ai += (if (rel.lte(av, bv)) 1 else 0)
-      bi += (if (rel.gte(av, bv)) 1 else 0)
+      ai += (if (av <= bv) 1 else 0)
+      bi += (if (av >= bv) 1 else 0)
     }
 
     res
@@ -225,17 +225,17 @@ object fastSparse {
 
 
   /** result = a -- b */
-  def diff[@specialized(Int, Long, Float, Double) T: ClassTag](a: Array[T], b: Array[T])(implicit rel: Rel[T]): Array[T] = {
-    val res = new Array[T](diffSize(a, b))
+  def diff(a: Array[Int], b: Array[Int]): Array[Int] = {
+    val res = new Array[Int](diffSize(a, b))
     var i, ai, bi = 0
     while (ai != a.length && bi != b.length) {
       val av = a(ai)
       val bv = b(bi)
-      if (rel.eq(av, bv)) {
+      if (av == bv) {
         ai += 1
         bi += 1
 
-      } else if (rel.lt(av, bv)) {
+      } else if (av < bv) {
         res(i) = av
         i += 1
         ai += 1
