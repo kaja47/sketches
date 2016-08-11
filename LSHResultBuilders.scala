@@ -2,6 +2,7 @@ package atrox.sketch
 
 import atrox.Cursor2
 import atrox.Bits
+import atrox.TopKFloatInt
 
 object IndexResultBuilder {
   def make(distinct: Boolean, maxResults: Int): IndexResultBuilder = 
@@ -16,7 +17,7 @@ trait IndexResultBuilder {
   def += (idx: Int, sim: Double): Unit
   def ++= (rb: IndexResultBuilder): Unit
   def result: Array[Int]
-  def cursor: Cursor2[Int, Float]
+  def idxSimCursor: Cursor2[Int, Float]
 }
 
 class AllIndexResultBuilder(distinct: Boolean) extends IndexResultBuilder {
@@ -41,7 +42,7 @@ class AllIndexResultBuilder(distinct: Boolean) extends IndexResultBuilder {
     val arr = if (distinct) res.result.distinct else res.result
     arr.map(x => Bits.unpackIntHi(x))
   }
-  def cursor = new Cursor2[Int, Float] {
+  def idxSimCursor = new Cursor2[Int, Float] {
     private val arr = if (distinct) res.result.distinct else res.result
     private var pos = -1
 
@@ -55,8 +56,8 @@ class AllIndexResultBuilder(distinct: Boolean) extends IndexResultBuilder {
 }
 
 class TopKIndexResultBuilder(k: Int, distinct: Boolean) extends IndexResultBuilder {
-  private var res: atrox.TopKFloatInt = null // top-k is allocated only when it's needed
-  private def createTopK() = if (res == null) res = new atrox.TopKFloatInt(k, distinct)
+  private var res: TopKFloatInt = null // top-k is allocated only when it's needed
+  private def createTopK() = if (res == null) res = new TopKFloatInt(k, distinct)
 
   def size = if (res == null) 0 else res.size
 
@@ -74,5 +75,5 @@ class TopKIndexResultBuilder(k: Int, distinct: Boolean) extends IndexResultBuild
   }
 
   def result = if (res == null) Array() else res.drainToArray()
-  def cursor = { createTopK() ; res.cursor.swap }
+  def idxSimCursor = { createTopK() ; res.cursor.swap }
 }

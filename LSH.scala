@@ -684,7 +684,7 @@ abstract class LSH { self =>
     }
 
   protected def mkSims(irb: IndexResultBuilder)(f: (Cursor2[Int, Float], ArrayBuilder.ofRef[Sim]) => Unit): Iterator[Sim] = {
-    val cur = irb.cursor
+    val cur = irb.idxSimCursor
     val res = new ArrayBuilder.ofRef[Sim]
     res.sizeHint(irb.size)
     f(cur, res)
