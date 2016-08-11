@@ -27,8 +27,7 @@ object MinHash {
       var min = Int.MaxValue
       var j = 0
       while (j < set.length) {
-        val h = f(set(j))
-        if (h < min) { min = h }
+        min = math.min(min, f(set(j)))
         j += 1
       }
       min
