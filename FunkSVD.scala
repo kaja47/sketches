@@ -19,7 +19,7 @@ object FunkSVD {
 		val γ = 0.1   // regularization term
 
 		def R = for { 
-			row <- 0 until input.size iterator ;
+			row <- (0 until input.size).iterator ;
 			(col, r) <- input(row).activeIterator
 		} yield (r, row, col)
 
@@ -72,7 +72,7 @@ object FunkSVD {
 
 		var j = 0
 		for { 
-			row <- 0 until input.size iterator ;
+			row <- (0 until input.size).iterator ;
 			(col, r) <- input(row).activeIterator
 		} {
 			rows(j) = row
@@ -205,7 +205,7 @@ object FunkSVD {
 		println(rowRanges map (r => (r.start, r.end)))
 		println(colRanges map (r => (r.start, r.end)))
 
-		val chunks: Array[Array[Chunk]] = (0 until threads).par map { chunkRow =>
+		val chunks: Array[Array[Chunk]] = (0 until threads).par.map { chunkRow =>
 			Array.tabulate(threads) { chunkCol =>
 
 				def iterate: Iterator[(Int, Int, Float, Int)] = {
@@ -230,7 +230,7 @@ object FunkSVD {
 
 				chunk
 			}
-		} toArray
+		}.toArray
 
 		for (ch <- chunks; c <- ch) { println(c.size) }
 

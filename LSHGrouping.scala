@@ -107,7 +107,7 @@ object Grouping {
       map.getOrElseUpdate(k, new mutable.ArrayBuilder.ofInt) += v
     }
     def getAll = for ((i, a) <- map.iterator) yield (i, a.result)
-    def toArray = (0 to map.keys.max) map { i => if (map.contains(i)) map(i).result else null } toArray
+    def toArray = Array.tabulate(map.keys.max+1) { i => if (map.contains(i)) map(i).result else null }
   }
 
 }

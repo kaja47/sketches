@@ -151,7 +151,7 @@ object SingleBitMinHash {
 
 
 object RandomHyperplanes {
-
+  import scala.language.reflectiveCalls
 
   def sketching[V <: { def size: Int }](items: Seq[V], n: Int)(implicit ev: CanDot[V]): BitSketching =
     new BitSketchingOf(items, n, i => mkSketcher(items.head.size, (i+1) * 1000), Estimator(n))

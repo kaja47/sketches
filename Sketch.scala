@@ -283,7 +283,7 @@ case class IntSketchingOf[T](
 ) extends IntSketching {
 
   def this(items: Seq[T], n: Int, mkSketcher: Int => IntSketcher[T], estimator: IntEstimator) =
-    this(items, 0 until n map { i => () => mkSketcher(i) } toArray, estimator)
+    this(items, Array.tabulate(n) { i => () => mkSketcher(i) }, estimator)
 
   lazy val sketchers: Array[IntSketcher[T]] = _sketchers map { _.apply }
 
@@ -475,7 +475,7 @@ case class BitSketchingOf[T](
 ) extends BitSketching {
 
   def this(items: Seq[T], n: Int, mkSketcher: Int => BitSketcher[T], estimator: BitEstimator) =
-    this(items, 0 until n map { i => () => mkSketcher(i) } toArray, estimator)
+    this(items, Array.tabulate(n) { i => () => mkSketcher(i) }, estimator)
 
   lazy val sketchers: Array[BitSketcher[T]] = _sketchers map { _.apply }
 

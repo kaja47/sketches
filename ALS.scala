@@ -200,7 +200,7 @@ object ALS {
       val YtY = Y.t * Y
       println("YtY "+(System.nanoTime-s)+"ns")
 
-      for (u <- 0 until X.rows par) {
+      for (u <- (0 until X.rows).par) {
         //val Ru = sliceVec(R, u)
         //val YtCuPu = Y.t * Ru.mapActiveValues(v => 1 + v * α)
 
