@@ -303,7 +303,7 @@ abstract class LSH { self =>
   def cfg: LSHCfg
   def bands: Int
 
-  protected def requireSketchArray: SketchArray = sketch match {
+  protected def requireSketchArray(): SketchArray = sketch match {
     case sk: atrox.sketch.Sketch[_] => sk.sketchArray.asInstanceOf[SketchArray]
     case _ => sys.error("Sketch instance required")
   }
@@ -380,7 +380,7 @@ abstract class LSH { self =>
 
       } else {
         val minBits = estimator.minSameBits(minEst)
-        val skarr = requireSketchArray
+        val skarr = requireSketchArray()
         for (idxs <- rawCandidateIndexes(sketch, skidx)) {
           var i = 0 ; while (i < idxs.length) {
             val bits = estimator.sameBits(skarr, idxs(i), sketch, skidx)
@@ -461,7 +461,7 @@ abstract class LSH { self =>
 
       } else {
         val minBits = estimator.minSameBits(minEst)
-        val skarr = requireSketchArray
+        val skarr = requireSketchArray()
         rawStreamIndexes flatMap { idxs =>
           val res = collection.mutable.ArrayBuffer[Sim]()
           var i = 0 ; while (i < idxs.length) {
@@ -516,7 +516,7 @@ abstract class LSH { self =>
       requireSimFun(f)
       runLoopNoEstimate(idx, candidates, minSim, f, res)
     } else {
-      val sketch = requireSketchArray
+      val sketch = requireSketchArray()
       runLoopYesEstimate(idx, candidates, sketch, minEst, minSim, f, res)
     }
 
@@ -621,7 +621,7 @@ abstract class LSH { self =>
 
   protected def runTileYesEstimate(idxs: Idxs, ratio: Double, minEst: Double, minSim: Double, f: SimFun, res: Array[IndexResultBuilder]): Unit = {
     val minBits = estimator.minSameBits(minEst)
-    val skarr = requireSketchArray
+    val skarr = requireSketchArray()
     var i = 0 ; while (i < idxs.length) {
       if (ThreadLocalRandom.current().nextDouble() < ratio) {
         var j = i+1 ; while (j < idxs.length) {
@@ -672,7 +672,7 @@ abstract class LSH { self =>
       }
 
     } else if (!noEstimates && f != null) {
-      val skarr = requireSketchArray
+      val skarr = requireSketchArray()
       mkSims(irb) { (cur, res) =>
         while (cur.moveNext()) {
           val est = estimator.estimateSimilarity(skarr, idx, skarr, cur.key)
