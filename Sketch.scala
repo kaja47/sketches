@@ -33,7 +33,6 @@ trait HashFuncLong[T] extends Serializable {
 }
 
 trait Sketching[SketchArray] {
-
   def writeSketchFragment(itemIdx: Int, from: Int, to: Int, dest: SketchArray, destBitOffset: Int): Unit
   def writeSketchFragment(itemIdx: Int, dest: SketchArray, destBitOffset: Int): Unit
   def getSketchFragment(item: Int, from: Int, to: Int): SketchArray
