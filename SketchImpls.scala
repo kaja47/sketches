@@ -10,11 +10,11 @@ import java.util.Arrays
 
 object MinHash {
 
-  def sketching[Item](sets: Seq[Item], n: Int)(implicit mk: HashFunc[Int] => MinHasher[Item]): IntSketching =
-    new IntSketchingOf(sets, n, i => mk(HashFunc.random(i * 1000)), Estimator(n))
+  def sketching[Item](sets: Seq[Item], hashFunctions: Int)(implicit mk: HashFunc[Int] => MinHasher[Item]): IntSketching =
+    new IntSketchingOf(sets, hashFunctions, i => mk(HashFunc.random(i * 1000)), Estimator(hashFunctions))
 
-  def apply[Item](sets: Seq[Item], n: Int)(implicit mk: HashFunc[Int] => MinHasher[Item]): IntSketch =
-    IntSketch.make(sketching(sets, n), Estimator(n), componentsAtOnce = n)
+  def apply[Item](sets: Seq[Item], hashFunctions: Int)(implicit mk: HashFunc[Int] => MinHasher[Item]): IntSketch =
+    IntSketch.make(sketching(sets, hashFunctions), Estimator(hashFunctions), componentsAtOnce = hashFunctions)
 
 
   /** applies one function to every element of one set and reduces it to minumum */
@@ -62,11 +62,11 @@ object MinHash {
 /** based on https://www.sumologic.com/2015/10/22/rapid-similarity-search-with-weighted-min-hash/ */
 object WeightedMinHash {
 
-  def sketching[Item, W](sets: Seq[Item], weights: W, n: Int)(implicit mk: ((HashFunc[Int], W)) => WeightedMinHasher[Item]): IntSketching =
-    new IntSketchingOf(sets, n, i => mk(HashFunc.random(i * 1000), weights), MinHash.Estimator(n))
+  def sketching[Item, W](sets: Seq[Item], weights: W, hashFunctions: Int)(implicit mk: ((HashFunc[Int], W)) => WeightedMinHasher[Item]): IntSketching =
+    new IntSketchingOf(sets, hashFunctions, i => mk(HashFunc.random(i * 1000), weights), MinHash.Estimator(hashFunctions))
 
-  def apply[Item, W](sets: Seq[Item], weights: W, n: Int)(implicit mk: ((HashFunc[Int], W)) => WeightedMinHasher[Item]): IntSketch =
-    IntSketch.make(sketching(sets, weights, n), MinHash.Estimator(n), componentsAtOnce = n)
+  def apply[Item, W](sets: Seq[Item], weights: W, hashFunctions: Int)(implicit mk: ((HashFunc[Int], W)) => WeightedMinHasher[Item]): IntSketch =
+    IntSketch.make(sketching(sets, weights, hashFunctions), MinHash.Estimator(hashFunctions), componentsAtOnce = hashFunctions)
 
 
   /** applies one function to every element of one set and reduces it to minumum */
