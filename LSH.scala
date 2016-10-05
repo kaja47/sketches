@@ -548,8 +548,9 @@ abstract class LSH { self =>
   protected def _allSimilar_notCompact(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, IndexResultBuilder)] = {
 
     // maxCandidates option is simulated via sampling
-    val comparisons = streamIndexes.map { idxs => (idxs.length - 1) * idxs.length / 2 } sum
-    val ratio = 1.0 * length * cfg.maxCandidates / comparisons
+    val comparisons = streamIndexes.map { idxs => (idxs.length.toDouble - 1) * idxs.length / 2 } sum
+    val ratio = length.toDouble * cfg.maxCandidates / comparisons
+    assert(ratio >= 0)
 
     if (minSim == LSH.NoEstimate) requireSimFun(f)
 
