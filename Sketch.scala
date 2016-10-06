@@ -97,56 +97,58 @@ trait Sketch[SketchArray] extends Serializable {
   def allSimilarIndexes(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, Idxs)] = {
     val minBits = estimator.minSameBits(minEst)
 
-    // this needs in the worst case O(n * s / 4) additional space, where n is the
-    // number of items in this sketch and s is average number of similar
-    // indexes
-    if (!cfg.compact && !cfg.parallel) {
-      val stripeSize = 64
-      val res = Array.fill(length)(newIndexResultBuilder)
+    (cfg.compact, cfg.parallel) match {
+      // this needs in the worst case O(n * s / 4) additional space, where n is the
+      // number of items in this sketch and s is average number of similar
+      // indexes
+      case (false, false) =>
+        val stripeSize = 64
+        val res = Array.fill(length)(newIndexResultBuilder)
 
-      Iterator.range(0, length, step = stripeSize) flatMap { start =>
+        Iterator.range(0, length, step = stripeSize) flatMap { start =>
 
-        stripeRun(stripeSize, start, length, minBits, minSim, f, true, new Op {
-          def apply(i: Int, j: Int, est: Double, sim: Double): Unit = {
-            res(i) += (j, sim)
-            res(j) += (i, sim)
-          }
-        })
-
-        val endi = math.min(start + stripeSize, length)
-        Iterator.range(start, endi) map { i =>
-          val arr = res(i).result
-          res(i) = null
-          (i, arr)
-        } filter { _._2.nonEmpty }
-      }
-
-    // this needs no additional memory but it have to do full n**2 iterations
-    } else {
-      //Iterator.tabulate(length) { idx => (idx, similarIndexes(idx, minEst, minSim, f)) }
-
-      val stripeSize = 64
-      val stripesInParallel = if (cfg.parallel) 16 else 1
-      println(s"copmact, stripesInParallel $stripesInParallel")
-
-      Iterator.range(0, length, step = stripeSize * stripesInParallel) flatMap { pti =>
-        val res = Array.fill(stripeSize * stripesInParallel)(newIndexResultBuilder)
-
-        parStripes(stripesInParallel, stripeSize, pti, length) { start =>
-          stripeRun(stripeSize, start, length, minBits, minSim, f, false, new Op {
+          stripeRun(stripeSize, start, length, minBits, minSim, f, true, new Op {
             def apply(i: Int, j: Int, est: Double, sim: Double): Unit = {
-              res(i-pti) += (j, sim)
+              res(i) += (j, sim)
+              res(j) += (i, sim)
             }
           })
+
+          val endi = math.min(start + stripeSize, length)
+          Iterator.range(start, endi) map { i =>
+            val arr = res(i).result
+            res(i) = null
+            (i, arr)
+          } filter { _._2.nonEmpty }
         }
 
-        Iterator.tabulate(res.length) { i => (i + pti, res(i).result) } filter { _._2.nonEmpty }
-      }
+      // this needs no additional memory but it have to do full n**2 iterations
+      case (_, _) =>
+        //Iterator.tabulate(length) { idx => (idx, similarIndexes(idx, minEst, minSim, f)) }
 
+        val stripeSize = 64
+        val stripesInParallel = if (cfg.parallel) 16 else 1
+        println(s"copmact, stripesInParallel $stripesInParallel")
+
+        Iterator.range(0, length, step = stripeSize * stripesInParallel) flatMap { pti =>
+          val res = Array.fill(stripeSize * stripesInParallel)(newIndexResultBuilder)
+
+          parStripes(stripesInParallel, stripeSize, pti, length) { start =>
+            stripeRun(stripeSize, start, length, minBits, minSim, f, false, new Op {
+              def apply(i: Int, j: Int, est: Double, sim: Double): Unit = {
+                res(i-pti) += (j, sim)
+              }
+            })
+          }
+
+          Iterator.tabulate(res.length) { i => (i + pti, res(i).result) } filter { _._2.nonEmpty }
+        }
     }
   }
   def allSimilarIndexes(minEst: Double): Iterator[(Int, Idxs)] =
     allSimilarIndexes(minEst, 0.0, null)
+  def allSimilarIndexes: Iterator[(Int, Idxs)] =
+    allSimilarIndexes(0.0, 0.0, null)
 
   def allSimilarItems(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, Iterator[Sim])] = {
     val ff = if (cfg.orderByEstimate) null else f
@@ -154,6 +156,8 @@ trait Sketch[SketchArray] extends Serializable {
   }
   def allSimilarItems(minEst: Double): Iterator[(Int, Iterator[Sim])] =
     allSimilarItems(minEst, 0.0, null)
+  def allSimilarItems: Iterator[(Int, Iterator[Sim])] =
+    allSimilarItems(0.0, 0.0, null)
 
   // === internal cruft ===
 
