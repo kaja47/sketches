@@ -493,7 +493,7 @@ abstract class LSH { self =>
     val candidateCount = sumLength(rci)
 
     if (candidateCount <= cfg.maxCandidates) {
-      fastSparse.union(rci)
+      fastSparse.union(candidateIdxs, 0)
 
     } else {
       val map = new IntFreqMap(initialSize = cfg.maxCandidates, loadFactor = 0.42, freqThreshold = bands)

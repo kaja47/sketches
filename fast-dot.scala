@@ -347,8 +347,10 @@ object fastSparse {
         size
     }
 
-
   def union(sets: Array[Array[Int]]): Array[Int] =
+    union(sets, 0)
+
+  def union(sets: Array[Array[Int]], expectedResultSize: Int): Array[Int] =
     sets.length match {
       case 0 => new Array[Int](0)
       case 1 => sets(0)
@@ -357,6 +359,7 @@ object fastSparse {
         val (heap, positions) = _initUnion(sets)
         var min = Long.MinValue
         val buff = new collection.mutable.ArrayBuilder.ofInt
+        buff.sizeHint(expectedResultSize)
 
         while (heap.nonEmpty) {
           val key = heap.minKey
