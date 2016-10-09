@@ -1,5 +1,96 @@
 package atrox
 
+
+object TopKFloatIntEstimate {
+  import sketch.HashFunc
+  protected[atrox] val hf = Array.tabulate[HashFunc[Int]](256)(i => HashFunc.random(i * 4747))
+}
+
+
+/* Probabilistic version of TopK data structure that produces only distinct elements.
+ * It's based on ideas of cuckoo hashing and Robin Hood hashing. */
+class TopKFloatIntEstimate(k: Int, hashFunctions: Int, oversample: Int = 0) { self =>
+
+  require(k > 0)
+  require(hashFunctions < TopKFloatIntEstimate.hf.length)
+
+  private[this] val kpow = Bits.higherPowerOfTwo(math.max(k, oversample))
+  private[this] val arr = {
+    val arr = new Array[Long](kpow)
+    java.util.Arrays.fill(arr, Long.MinValue)
+    arr
+  }
+  private[this] var min = Long.MinValue
+
+  private def f(h: Int, pair: Long) =
+    TopKFloatIntEstimate.hf(h)(keyint(pair) ^ value(pair)) & (kpow - 1)
+
+  private def place(_pair: Long, h: Int): Unit = {
+    var pair = _pair
+    var i = 0 ; while (i < h) {
+      val pos = f(i, pair)
+      if (pair == arr(pos)) return // new value is the same as the value in array, filtering out duplicate
+      if (pair > arr(pos)) {       // new value is bigger than the old value, try to place the old value to another position
+        val oldPair = arr(pos)
+        arr(pos) = pair
+        if (oldPair <= min) {   // less then or equal comparison is there for handling array initialized to MinValue
+          min = findMin()       // just removed current minimum, find a new one, this should be triggered rarely enough (1/kpow?)
+          return                // encountered smaller value, it's not necessary to try to place it somewhere else
+        }
+        //place(oldPair, h)       // place old value
+        //return                  // if index of hash function that hashes value to this position was encoded in the array slot,
+                                // it wouldn't be necessary to try every hash position all over again (TODO?)
+        pair = oldPair
+        i = 0                   // manual tail recursion, baby!
+      } // else try next hash
+      i += 1
+    }
+  }
+
+  protected def findMin() = {
+    var min = Long.MaxValue
+    var i = 0; while (i < arr.length) {
+      min = java.lang.Math.min(min, arr(i))
+      i += 1
+    }
+    min
+  }
+
+  def insert(key: Float, value: Int): Unit = {
+    val pair = pack(key, value)
+    if (pair == Long.MinValue) throw new IllegalArgumentException()
+    if (pair > min) place(pair, hashFunctions)
+  }
+
+  def drainToArray(): Array[Int] = {
+    // TODO: heapify arr and return k items
+    val buff = new collection.mutable.ArrayBuilder.ofInt
+    buff.sizeHint(k)
+
+    var i = 0 ; while (i < arr.length) {
+      if (arr(i) != Long.MinValue) {
+        buff += value(arr(i))
+      }
+      i += 1
+    }
+    buff.result
+  }
+
+  def cursor = new Cursor2[Float, Int] {
+    private var pos = -1
+    def moveNext() = { do { pos += 1 } while (pos < arr.length && arr(pos) == Long.MinValue) ; pos < arr.length }
+    def key = self.key(arr(pos))
+    def value = self.value(arr(pos))
+  }
+
+  private def pack(key: Float, value: Int) = Bits.packSortable(key, value)
+  private def keyint(pair: Long): Int   = Bits.unpackIntHi(pair)
+  private def key   (pair: Long): Float = Bits.unpackSortableFloatHi(pair)
+  private def value (pair: Long): Int   = Bits.unpackIntLo(pair)
+}
+
+
+
 class TopKFloatInt(k: Int, distinct: Boolean = false) extends BaseMinFloatIntHeap(k) {
 //  private var valueSet: IntSet = if (distinct) new IntSet() else null
   protected var min = Float.NegativeInfinity
