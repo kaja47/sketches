@@ -605,38 +605,58 @@ abstract class LSH { self =>
     }
 
   protected def runTileNoEstimate(idxs: Idxs, ratio: Double, minSim: Double, f: SimFun, res: Array[IndexResultBuilder]): Unit = {
-    var i = 0 ; while (i < idxs.length) {
+    val stripeSize = 64
+    var stripej = 0 ; while (stripej < idxs.length) {
       if (ThreadLocalRandom.current().nextDouble() < ratio) {
-        var j = i+1 ; while (j < idxs.length) {
-          var sim = 0.0
-          if ({ sim = f(idxs(i), idxs(j)) ; sim >= minSim }) {
-            res(idxs(i)) += (idxs(j), sim)
-            res(idxs(j)) += (idxs(i), sim)
+        val endi = min(stripej + stripeSize, idxs.length)
+        val startj = stripej + 1
+        var j = startj ; while (j < idxs.length) {
+          val realendi = min(j, endi)
+          var i = stripej ; while (i < realendi) {
+
+            var sim = 0.0
+            if ({ sim = f(idxs(i), idxs(j)) ; sim >= minSim }) {
+              res(idxs(i)) += (idxs(j), sim)
+              res(idxs(j)) += (idxs(i), sim)
+            }
+
+            i += 1
           }
           j += 1
         }
       }
-      i += 1
+      stripej += stripeSize
     }
   }
 
   protected def runTileYesEstimate(idxs: Idxs, ratio: Double, minEst: Double, minSim: Double, f: SimFun, res: Array[IndexResultBuilder]): Unit = {
     val minBits = estimator.minSameBits(minEst)
     val skarr = requireSketchArray()
-    var i = 0 ; while (i < idxs.length) {
+
+    val stripeSize = 64
+    var stripej = 0 ; while (stripej < idxs.length) {
       if (ThreadLocalRandom.current().nextDouble() < ratio) {
-        var j = i+1 ; while (j < idxs.length) {
-          val bits = estimator.sameBits(skarr, idxs(i), skarr, idxs(j))
-          var sim = 0.0
-          if (bits >= minBits && (f == null || { sim = f(idxs(i), idxs(j)) ; sim >= minSim })) {
-            sim = if (f == null) estimator.estimateSimilarity(bits) else sim
-            res(idxs(i)) += (idxs(j), sim)
-            res(idxs(j)) += (idxs(i), sim)
+        val endi = min(stripej + stripeSize, idxs.length)
+        val startj = stripej + 1
+        var j = startj ; while (j < idxs.length) {
+          val realendi = min(j, endi)
+          var i = stripej ; while (i < realendi) {
+
+            val bits = estimator.sameBits(skarr, idxs(i), skarr, idxs(j))
+            var sim = 0.0
+            if (bits >= minBits && (f == null || { sim = f(idxs(i), idxs(j)) ; sim >= minSim })) {
+              sim = if (f == null) estimator.estimateSimilarity(bits) else sim
+              sim += 0.0
+              res(idxs(i)) += (idxs(j), sim)
+              res(idxs(j)) += (idxs(i), sim)
+            }
+
+            i += 1
           }
           j += 1
         }
-        i += 1
       }
+      stripej += stripeSize
     }
   }
 
