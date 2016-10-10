@@ -202,7 +202,7 @@ object LSH {
 
     val idxs = new Array[Array[Int]](bands * bandSize)
 
-    for ((bs, bandGroup) <- bandGrouping(bands, cfg)) {
+    for ((bs: Seq[Int], bandGroup: Int) <- bandGrouping(bands, cfg)) {
 
       val scratchpads = Array.ofDim[Int](cfg.bandsInOnePass, bandElements)
       val skslices    = bs map { b => sk.slice(b * bandElements, (b+1) * bandElements) } toArray
@@ -210,8 +210,8 @@ object LSH {
       def runItems(f: (Int, Int) => Unit) = {
         val base = bs(0)
         val end = bs.last
-        var i = 0 ; while (i < sk.length) {
-          var b = base ; while (b <= end) {
+        var i = 0 ; while (i < sk.length) { // iterate over all items
+          var b = base ; while (b <= end) { // iterate over bands of an item
             val h = if (sk.isInstanceOf[IntSketch]) {
               // if sk is IntSketch instance directly access it's internal sketch array, this saves some copying
               val _sk = sk.asInstanceOf[IntSketch]
