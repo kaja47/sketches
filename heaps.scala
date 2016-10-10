@@ -8,7 +8,11 @@ object TopKFloatIntEstimate {
 
 
 /* Probabilistic version of TopK data structure that produces only distinct elements.
- * It's based on ideas of cuckoo hashing and Robin Hood hashing. */
+ * It's based on ideas of cuckoo hashing and Robin Hood hashing.
+ * - https://cs.uwaterloo.ca/research/tr/1986/CS-86-14.pdf
+ * - http://www.sebastiansylvan.com/post/robin-hood-hashing-should-be-your-default-hash-table-implementation/
+ * - https://www.pvk.ca/Blog/more_numerical_experiments_in_hashing.html
+ * */
 class TopKFloatIntEstimate(k: Int, hashFunctions: Int, oversample: Int = 0) { self =>
 
   require(k > 0)
@@ -62,6 +66,13 @@ class TopKFloatIntEstimate(k: Int, hashFunctions: Int, oversample: Int = 0) { se
     if (pair > min) place(pair, hashFunctions)
   }
 
+  def += (key: Float, value: Int) = insert(key, value)
+
+  def ++= (tk: TopKFloatIntEstimate) {
+    val cur = tk.cursor
+    while (cur.moveNext) { insert(cur.key, cur.value) }
+  }
+
   def drainToArray(): Array[Int] = {
     // TODO: heapify arr and return k items
     val buff = new collection.mutable.ArrayBuilder.ofInt
@@ -76,7 +87,9 @@ class TopKFloatIntEstimate(k: Int, hashFunctions: Int, oversample: Int = 0) { se
     buff.result
   }
 
-  def cursor = new Cursor2[Float, Int] {
+  def cursor = rawCursor
+
+  def rawCursor = new Cursor2[Float, Int] {
     private var pos = -1
     def moveNext() = { do { pos += 1 } while (pos < arr.length && arr(pos) == Long.MinValue) ; pos < arr.length }
     def key = self.key(arr(pos))
@@ -147,7 +160,7 @@ class TopKFloatInt(k: Int, distinct: Boolean = false) extends BaseMinFloatIntHea
 
   /** Return the content (the value part of key-value pair) of this heap sorted
     * by the key part. This collection is emptied. */
-  def drainToArray() = {
+  def drainToArray(): Array[Int] = {
     val res = new Array[Int](size)
     var i = res.length-1 ; while (i >= 0) {
       res(i) = _minValue
