@@ -39,7 +39,9 @@ case class LSHBuildCfg(
     * only necessary amount of memory. */
   collectCounts: Boolean = false,
 
-  computeBandsInParallel: Boolean = false
+  computeBandsInParallel: Boolean = false,
+
+  reverseMapping: Boolean = false
 )
 
 case class LSHCfg(
@@ -172,7 +174,9 @@ object LSH {
       }
     }
 
-    new BitLSH(sk, sk.estimator, LSHCfg(), idxs, sk.length, sk.sketchLength, bands, bandBits)
+    val revmap = if (cfg.reverseMapping) makeReverseMapping(sk.length, bands, idxs) else null
+
+    new BitLSH(sk, sk.estimator, LSHCfg(), idxs, revmap, sk.length, sk.sketchLength, bands, bandBits)
   }
 
 
@@ -245,7 +249,9 @@ object LSH {
       }
     }
 
-    new IntLSH(sk, sk.estimator, LSHCfg(), idxs, sk.length, sk.sketchLength, bands, bandElements, hashBits)
+    val revmap = if (cfg.reverseMapping) makeReverseMapping(sk.length, bands, idxs) else null
+
+    new IntLSH(sk, sk.estimator, LSHCfg(), idxs, revmap, sk.length, sk.sketchLength, bands, bandElements, hashBits)
   }
 
   def hashSlice(sketchArray: Array[Int], sketchLength: Int, i: Int, band: Int, bandLength: Int, hashBits: Int) = {
@@ -270,6 +276,27 @@ object LSH {
   def bandGrouping(bands: Int, cfg: LSHBuildCfg): GenSeq[(Seq[Int], Int)] = {
     val bss = (0 until bands grouped cfg.bandsInOnePass).zipWithIndex.toSeq ;
     if (!cfg.computeBandsInParallel) bss else bss.par
+  }
+
+
+  def makeReverseMapping(length: Int, bands: Int, idxs: Array[Array[Int]]) = {
+    val revmap = Array.fill(length) {
+      val ab = new ArrayBuilder.ofInt
+      ab.sizeHint(bands)
+      ab
+    }
+
+    for ((bucket, bidx) <- idxs.zipWithIndex) {
+      if (bucket != null) {
+        var i = 0; while (i < bucket.length) {
+          revmap(bucket(i)) += bidx
+          i += 1
+        }
+      }
+    }
+
+    val res = revmap.map(_.result)
+    res
   }
 
 }
@@ -302,6 +329,7 @@ abstract class LSH { self =>
   def estimator: Estimator[SketchArray]
   def cfg: LSHCfg
   def bands: Int
+  protected def reverseIdxs: Array[Array[Int]]
 
   protected def requireSketchArray(): SketchArray = sketch match {
     case sk: atrox.sketch.Sketch[_] => sk.sketchArray.asInstanceOf[SketchArray]
@@ -320,11 +348,17 @@ abstract class LSH { self =>
     pow(1.0 / bands, 1.0 / bandLen)
   }
 
+  def needsReverseMapping = if (reverseIdxs == null) withReverseMapping else this
+  def withReverseMapping: LSH
+
   trait Query[Res] {
-    /** skidx is an index into the provided sketch array instance, idx is a global index of the current item. */
-    def apply(sketch: SketchArray, skidx: Int, idx: Int, minEst: Double, minSim: Double, f: SimFun): Res
-    def apply(sketch: SketchArray, skidx: Int, idx: Int, minEst: Double): Res =
-      apply(sketch, skidx, idx, minEst, 0.0, null)
+    /** skidx is an index into the provided sketch array instance, idx is the global index of the current item. */
+    def apply(candidateIdxs: Array[Idxs], idx: Int, minEst: Double, minSim: Double, f: SimFun): Res
+
+    def apply(skarr: SketchArray, skidx: Int, idx: Int, minEst: Double, minSim: Double, f: SimFun): Res =
+      apply(rawCandidateIndexes(skarr, skidx), idx, minEst, minSim, f)
+    def apply(skarr: SketchArray, skidx: Int, idx: Int, minEst: Double): Res =
+      apply(skarr, skidx, idx, minEst, 0.0, null)
     def apply(sketch: Sketching, idx: Int, minEst: Double): Res =
       apply(sketch.getSketchFragment(idx), 0, idx, minEst, 0.0, null)
     def apply(sketch: Sketching, idx: Int, minEst: Double, minSim: Double, f: SimFun): Res =
@@ -332,7 +366,12 @@ abstract class LSH { self =>
 
     def apply(idx: Int, minEst: Double, minSim: Double, f: SimFun): Res = {
       require(idx >= 0 && idx < length, s"index $idx is out of range (0 until $length)")
-      apply(sketch.getSketchFragment(idx), 0, idx, minEst, minSim, f)
+
+      if (reverseIdxs == null) {
+        apply(sketch.getSketchFragment(idx), 0, idx, minEst, minSim, f)
+      } else {
+        apply(rawCandidateIndexes(idx), idx, minEst, minSim, f)
+      }
     }
     def apply(idx: Int, minEst: Double): Res = apply(idx, minEst, 0.0, null)
     def apply(idx: Int): Res = apply(idx, 0.0, 0.0, null)
@@ -366,12 +405,12 @@ abstract class LSH { self =>
   // If minEst is set to Double.NegativeInfinity, no estimates are computed.
   // Instead candidates are directly filtered through similarity function.
   val rawSimilarIndexes = new Query[Idxs] {
-    def apply(sketch: SketchArray, skidx: Int, idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs = {
+    def apply(candidateIdxs: Array[Idxs], idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs = {
       val res = new ArrayBuilder.ofInt
 
       if (minEst == LSH.NoEstimate) {
         requireSimFun(f)
-        for (idxs <- rawCandidateIndexes(sketch, skidx)) {
+        for (idxs <- candidateIdxs) {
           var i = 0 ; while (i < idxs.length) {
             if (f(idxs(i), idx) >= minSim) { res += idxs(i) }
             i += 1
@@ -381,9 +420,9 @@ abstract class LSH { self =>
       } else {
         val minBits = estimator.minSameBits(minEst)
         val skarr = requireSketchArray()
-        for (idxs <- rawCandidateIndexes(sketch, skidx)) {
+        for (idxs <- candidateIdxs) {
           var i = 0 ; while (i < idxs.length) {
-            val bits = estimator.sameBits(skarr, idxs(i), sketch, skidx)
+            val bits = estimator.sameBits(skarr, idxs(i), skarr, idx)
             if (bits >= minBits && (f == null || f(idxs(i), idx) >= minSim)) { res += idxs(i) }
             i += 1
           }
@@ -395,8 +434,8 @@ abstract class LSH { self =>
     }
   }
 
-  protected def _similar(skarr: SketchArray, skidx: Int, idx: Int, minEst: Double, minSim: Double, f: SimFun): IndexResultBuilder = {
-    val candidates = selectCandidates(skarr, skidx)
+  protected def _similar(candidateIdxs: Array[Idxs], idx: Int, minEst: Double, minSim: Double, f: SimFun): IndexResultBuilder = {
+    val candidates = selectCandidates(candidateIdxs)
     val res = newIndexResultBuilder()
     runLoop(idx, candidates, minEst, minSim, f, res)
     res
@@ -404,15 +443,15 @@ abstract class LSH { self =>
 
   // similarIndexes().toSet == (rawSimilarIndexes().distinct.toSet - idx)
   val similarIndexes = new Query[Idxs] {
-    def apply(skarr: SketchArray, skidx: Int, idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs =
-      _similar(skarr, skidx, idx, minEst, minSim, f).result
+    def apply(candidateIdxs: Array[Idxs], idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs =
+      _similar(candidateIdxs, idx, minEst, minSim, f).result
   }
 
   val similarItems = new Query[Iterator[Sim]] {
-    def apply(skarr: SketchArray, skidx: Int, idx: Int, minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] = {
+    def apply(candidateIdxs: Array[Idxs], idx: Int, minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] = {
       if (cfg.orderByEstimate) require(minEst != LSH.NoEstimate, "For orderByEstimate to work estimation must not be disabled.")
       val ff = if (cfg.orderByEstimate) null else f
-      val simIdxs = _similar(skarr, skidx, idx, minEst, minSim, ff)
+      val simIdxs = _similar(candidateIdxs, idx, minEst, minSim, ff)
       indexResultBuilderToSims(idx, simIdxs, f, minEst == LSH.NoEstimate)
     }
   }
@@ -485,19 +524,18 @@ abstract class LSH { self =>
 
 
   /** must never return duplicates */
-  def selectCandidates(skarr: SketchArray, idx: Int): Idxs = {
+  private def selectCandidates(candidateIdxs: Array[Idxs]): Idxs = {
     // TODO candidate selection can be done on the fly without allocations
     //      using some sort of merging cursor
 
-    val rci = rawCandidateIndexes(skarr, idx)
-    val candidateCount = sumLength(rci)
+    val candidateCount = sumLength(candidateIdxs)
 
     if (candidateCount <= cfg.maxCandidates) {
-      fastSparse.union(candidateIdxs, 0)
+      fastSparse.union(candidateIdxs, candidateCount)
 
     } else {
       val map = new IntFreqMap(initialSize = cfg.maxCandidates, loadFactor = 0.42, freqThreshold = bands)
-      for (is <- rci) { map ++= (is, 1) }
+      for (idxs <- candidateIdxs) { map ++= (idxs, 1) }
       map.topK(cfg.maxCandidates)
     }
   }
@@ -511,7 +549,7 @@ abstract class LSH { self =>
     sum
   }
 
-  protected def runLoop(idx: Int, candidates: Idxs, minEst: Double, minSim: Double, f: SimFun, res: IndexResultBuilder) =
+  private def runLoop(idx: Int, candidates: Idxs, minEst: Double, minSim: Double, f: SimFun, res: IndexResultBuilder) =
     if (minEst == LSH.NoEstimate) {
       requireSimFun(f)
       runLoopNoEstimate(idx, candidates, minSim, f, res)
@@ -520,7 +558,7 @@ abstract class LSH { self =>
       runLoopYesEstimate(idx, candidates, sketch, minEst, minSim, f, res)
     }
 
-  protected def runLoopNoEstimate(idx: Int, candidates: Idxs, minSim: Double, f: SimFun, res: IndexResultBuilder) = {
+  private def runLoopNoEstimate(idx: Int, candidates: Idxs, minSim: Double, f: SimFun, res: IndexResultBuilder) = {
     var i = 0 ; while (i < candidates.length) {
       var sim = 0.0
       if (idx != candidates(i) && { sim = f(candidates(i), idx) ; sim >= minSim }) {
@@ -530,7 +568,7 @@ abstract class LSH { self =>
     }
   }
 
-  protected def runLoopYesEstimate(idx: Int, candidates: Idxs, skarr: SketchArray, minEst: Double, minSim: Double, f: SimFun, res: IndexResultBuilder) = {
+  private def runLoopYesEstimate(idx: Int, candidates: Idxs, skarr: SketchArray, minEst: Double, minSim: Double, f: SimFun, res: IndexResultBuilder) = {
     val minBits = estimator.minSameBits(minEst)
     var i = 0 ; while (i < candidates.length) {
       val bits = estimator.sameBits(skarr, candidates(i), skarr, idx)
@@ -731,7 +769,8 @@ abstract class LSH { self =>
   */
 final case class IntLSH(
     sketch: IntSketching, estimator: IntEstimator, cfg: LSHCfg,
-    idxs: Array[Array[Int]],
+    idxs: Array[Array[Int]],        // mapping from a bucket to item idxs that hash into it
+    reverseIdxs: Array[Array[Int]], // mapping from a item idx to buckets in which it's located
     length: Int,
     sketchLength: Int, bands: Int, bandLength: Int, hashBits: Int
   ) extends LSH with Serializable {
@@ -740,6 +779,7 @@ final case class IntLSH(
   type Sketching = IntSketching
 
   def withConfig(newCfg: LSHCfg): IntLSH = copy(cfg = newCfg)
+  def withReverseMapping = copy(reverseIdxs = LSH.makeReverseMapping(length, bands, idxs))
 
   def bandHashes(sketchArray: SketchArray, idx: Int): Iterator[Int] =
     Iterator.tabulate(bands) { b => bandHash(sketchArray, idx, b) }
@@ -749,6 +789,9 @@ final case class IntLSH(
 
   def rawStreamIndexes: Iterator[Idxs] = idxs.iterator filter (_ != null)
 
+
+  override def rawCandidateIndexes(idx: Int): Array[Idxs] =
+    reverseIdxs(idx) map { bucket => idxs(bucket) }
 
   def rawCandidateIndexes(skarr: SketchArray, skidx: Int): Array[Idxs] =
     Array.tabulate(bands) { b =>
@@ -763,7 +806,8 @@ final case class IntLSH(
 
 final case class BitLSH(
     sketch: BitSketching, estimator: BitEstimator, cfg: LSHCfg,
-    idxs: Array[Array[Int]],
+    idxs: Array[Array[Int]],        // mapping from a bucket to item idxs that hash into it
+    reverseIdxs: Array[Array[Int]], // mapping from a item idx to buckets in which it's located
     length: Int,
     bitsPerSketch: Int, bands: Int, bandBits: Int
   ) extends LSH with Serializable {
@@ -772,12 +816,16 @@ final case class BitLSH(
   type Sketching = BitSketching
 
   def withConfig(newCfg: LSHCfg): BitLSH = copy(cfg = newCfg)
+  def withReverseMapping = copy(reverseIdxs = LSH.makeReverseMapping(length, bands, idxs))
 
   def bandHashes(sketchArray: Array[Long], idx: Int): Iterator[Int] =
     Iterator.tabulate(bands) { b => LSH.ripBits(sketchArray, bitsPerSketch, idx, b, bandBits) }
 
   def rawStreamIndexes: Iterator[Idxs] = idxs.iterator filter (_ != null)
 
+
+  override def rawCandidateIndexes(idx: Int): Array[Idxs] =
+    reverseIdxs(idx) map { bucket => idxs(bucket) }
 
   def rawCandidateIndexes(skarr: SketchArray, skidx: Int): Array[Idxs] =
     Array.tabulate(bands) { b =>
