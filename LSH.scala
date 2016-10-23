@@ -87,7 +87,6 @@ case class LSHCfg(
     |  compact = $compact
     |  parallel = $parallel
     |  parallelPartialResultSize = $parallelPartialResultSize
-    |  thicken = $thicken
     |)
   """.trim.stripMargin('|')
 }
