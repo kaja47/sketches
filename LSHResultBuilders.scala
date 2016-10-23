@@ -6,9 +6,10 @@ import atrox.TopKFloatInt
 
 object IndexResultBuilder {
   def make(distinct: Boolean, maxResults: Int): IndexResultBuilder = 
-    (distinct, maxResults) match {
-      case (d, Int.MaxValue) => new AllIndexResultBuilder(d)
-      case (d, mr)           => new TopKIndexResultBuilder(mr, d)
+    if (maxResults == Int.MaxValue) {
+      new AllIndexResultBuilder(distinct)
+    } else {
+      new TopKIndexResultBuilder(maxResults, distinct)
     }
 }
 
