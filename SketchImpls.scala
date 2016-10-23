@@ -223,7 +223,7 @@ object RandomProjections {
     private val randVec = mkRandomUnitVector(vectorLength, seed)
 
     def apply(item: bVector[Double]): Int =
-      (randVec dot item) / bucketSize toInt
+      ((randVec dot item) / bucketSize).toInt
   }
 
   private def mkRandomUnitVector(length: Int, seed: Int) = {
