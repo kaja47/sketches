@@ -435,8 +435,8 @@ trait BitSketching extends Sketching[Array[Long]] { self =>
   def estimator: BitEstimator
 
   /** @param itemIdx index of source item
-    * @param from index of first sketch component (inclusive)
-    * @param to index of last sketch component (exclusive)
+    * @param from index of the first sketch component (inclusive)
+    * @param to index of the last sketch component (exclusive)
     * @param dest sketch array where sketch data must be written
     * @param destBitOffset bit index in sketch array that is ready to be filled with sketch data
     */

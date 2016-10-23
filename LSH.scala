@@ -351,9 +351,10 @@ abstract class LSH { self =>
   def withReverseMapping: LSH
 
   trait Query[Res] {
-    /** skidx is an index into the provided sketch array instance, idx is the global index of the current item. */
     def apply(candidateIdxs: Array[Idxs], idx: Int, minEst: Double, minSim: Double, f: SimFun): Res
 
+    /** skidx is an index into the provided sketch array instance
+     *  idx is the global index of the current item that will be used as a field in Sim object and passed into SimFun */
     def apply(skarr: SketchArray, skidx: Int, idx: Int, minEst: Double, minSim: Double, f: SimFun): Res =
       apply(rawCandidateIndexes(skarr, skidx), idx, minEst, minSim, f)
     def apply(skarr: SketchArray, skidx: Int, idx: Int, minEst: Double): Res =
@@ -700,7 +701,7 @@ abstract class LSH { self =>
   protected def newIndexResultBuilder(distinct: Boolean = false, maxResults: Int = cfg.maxResults): IndexResultBuilder =
     IndexResultBuilder.make(distinct, maxResults)
 
-  /** This method converts the provided IndexResultBuilder to an iterator or Sim
+  /** This method converts the provided IndexResultBuilder to an iterator of Sim
     * objects while using similarity measure that was used internally in the
     * IRB for sorting and ordering. That way it's possible to avoid recomputing
     * estimate/similarity in certain cases. These cases are when we don't need
