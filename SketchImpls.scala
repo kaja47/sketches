@@ -14,7 +14,7 @@ object MinHash {
     new IntSketchingOf(sets, hashFunctions, i => mk(HashFunc.random(i * 1000)), Estimator(hashFunctions))
 
   def apply[Item](sets: Seq[Item], hashFunctions: Int)(implicit mk: HashFunc[Int] => MinHasher[Item]): IntSketch =
-    IntSketch.make(sketching(sets, hashFunctions), Estimator(hashFunctions), componentsAtOnce = hashFunctions)
+    IntSketch.make(sketching(sets, hashFunctions), componentsAtOnce = hashFunctions)
 
 
   /** applies one function to every element of one set and reduces it to minumum */
@@ -66,7 +66,7 @@ object WeightedMinHash {
     new IntSketchingOf(sets, hashFunctions, i => mk(HashFunc.random(i * 1000), weights), MinHash.Estimator(hashFunctions))
 
   def apply[Item, W](sets: Seq[Item], weights: W, hashFunctions: Int)(implicit mk: ((HashFunc[Int], W)) => WeightedMinHasher[Item]): IntSketch =
-    IntSketch.make(sketching(sets, weights, hashFunctions), MinHash.Estimator(hashFunctions), componentsAtOnce = hashFunctions)
+    IntSketch.make(sketching(sets, weights, hashFunctions), componentsAtOnce = hashFunctions)
 
 
   /** applies one function to every element of one set and reduces it to minumum */
@@ -122,7 +122,7 @@ object SingleBitMinHash {
     new BitSketchingOf(sets, n, (i: Int) => SingleBitMinHasher(mk(HashFunc.random(i * 1000))), mkEstimator(n))
 
   def apply[Item](sets: Seq[Item], n: Int)(implicit mk: HashFunc[Int] => MinHasher[Item]): BitSketch =
-    BitSketch.make(sketching(sets, n), mkEstimator(n), componentsAtOnce = n)
+    BitSketch.make(sketching(sets, n), componentsAtOnce = n)
 
   case class SingleBitMinHasher[T](mh: MinHasher[T]) extends BitSketcher[T] {
     def apply(x: T): Boolean = (mh(x) & 1) != 0
@@ -158,7 +158,7 @@ object RandomHyperplanes {
 
   def apply[V <: { def size: Int }](items: Seq[V], n: Int)(implicit ev: CanDot[V]): BitSketch = {
     require(n % 64 == 0, "sketch length muse be divisible by 64 (for now)")
-    BitSketch.make(sketching(items, n), Estimator(n), componentsAtOnce = 1)
+    BitSketch.make(sketching(items, n), componentsAtOnce = 1)
   }
 
   def apply(rowMatrix: DenseMatrix[Double], n: Int): BitSketch =
@@ -212,15 +212,15 @@ object RandomHyperplanes {
 
 object RandomProjections {
 
-  def sketching(items: Seq[SparseVector[Double]], n: Int, bucketSize: Int): IntSketching =
-    new IntSketchingOf(items, 0 until n map { i => () => mkSketcher(items.head.size, i * 1000, bucketSize) } toArray, Estimator(n))
+  def sketching(items: Seq[SparseVector[Double]], projections: Int, bucketSize: Int): IntSketching =
+    new IntSketchingOf(items, projections, i => mkSketcher(items.head.size, i * 1000, bucketSize), Estimator(projections))
 
-  def apply(items: Seq[SparseVector[Double]], n: Int, bucketSize: Int): IntSketch =
-    IntSketch.make(sketching(items, n, bucketSize), Estimator(n), componentsAtOnce = 1)
+  def apply(items: Seq[SparseVector[Double]], projections: Int, bucketSize: Int): IntSketch =
+    IntSketch.make(sketching(items, projections, bucketSize), componentsAtOnce = 1)
 
 
-  private def mkSketcher(n: Int, seed: Int, bucketSize: Int) = new IntSketcher[bVector[Double]] {
-    private val randVec = mkRandomUnitVector(n, seed)
+  private def mkSketcher(vectorLength: Int, seed: Int, bucketSize: Int) = new IntSketcher[bVector[Double]] {
+    private val randVec = mkRandomUnitVector(vectorLength, seed)
 
     def apply(item: bVector[Double]): Int =
       (randVec dot item) / bucketSize toInt

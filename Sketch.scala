@@ -330,9 +330,9 @@ object IntSketch {
     sketchArray
   }
 
-  def make[T](sk: IntSketching, estimator: IntEstimator, componentsAtOnce: Int = 0): IntSketch = {
+  def make[T](sk: IntSketching, componentsAtOnce: Int = 0): IntSketch = {
     val n = if (componentsAtOnce <= 0) sk.sketchLength else componentsAtOnce
-    IntSketch(makeSketchArray(sk, n), sk.sketchLength, estimator)
+    IntSketch(makeSketchArray(sk, n), sk.sketchLength, sk.estimator)
   }
 
 }
@@ -523,7 +523,7 @@ object BitSketch {
     sketchArray
   }
 
-  def make[T](sk: BitSketching, estimator: BitEstimator, componentsAtOnce: Int): BitSketch = {
+  def make[T](sk: BitSketching, componentsAtOnce: Int): BitSketch = {
     val n = if (componentsAtOnce <= 0) sk.sketchLength else componentsAtOnce
     BitSketch(makeSketchArray(sk, n), sk.sketchLength, sk.estimator)
   }
