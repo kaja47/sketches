@@ -51,7 +51,7 @@ object MinHash {
 
     def minSameBits(sim: Double): Int = {
       require(sim >= 0.0 && sim <= 1.0, "similarity must be from (0, 1)")
-      sim * sketchLength toInt
+      (sim * sketchLength).toInt
     }
   }
 
