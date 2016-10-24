@@ -328,7 +328,7 @@ abstract class LSH { self =>
   def estimator: Estimator[SketchArray]
   def cfg: LSHCfg
   def bands: Int
-  protected def reverseIdxs: Array[Array[Int]]
+  protected def hasReverseMapping: Boolean
 
   protected def requireSketchArray(): SketchArray = sketch match {
     case sk: atrox.sketch.Sketch[_] => sk.sketchArray.asInstanceOf[SketchArray]
@@ -347,7 +347,7 @@ abstract class LSH { self =>
     pow(1.0 / bands, 1.0 / bandLen)
   }
 
-  def needsReverseMapping = if (reverseIdxs == null) withReverseMapping else this
+  def needsReverseMapping = if (!hasReverseMapping) withReverseMapping else this
   def withReverseMapping: LSH
 
   trait Query[Res] {
@@ -367,10 +367,10 @@ abstract class LSH { self =>
     def apply(idx: Int, minEst: Double, minSim: Double, f: SimFun): Res = {
       require(idx >= 0 && idx < length, s"index $idx is out of range (0 until $length)")
 
-      if (reverseIdxs == null) {
-        apply(sketch.getSketchFragment(idx), 0, idx, minEst, minSim, f)
-      } else {
+      if (hasReverseMapping) {
         apply(rawCandidateIndexes(idx), idx, minEst, minSim, f)
+      } else {
+        apply(sketch.getSketchFragment(idx), 0, idx, minEst, minSim, f)
       }
     }
     def apply(idx: Int, minEst: Double): Res = apply(idx, minEst, 0.0, null)
@@ -780,6 +780,7 @@ final case class IntLSH(
 
   def withConfig(newCfg: LSHCfg): IntLSH = copy(cfg = newCfg)
   def withReverseMapping = copy(reverseIdxs = LSH.makeReverseMapping(length, bands, idxs))
+  def hasReverseMapping = reverseIdxs != null
 
   def bandHashes(sketchArray: SketchArray, idx: Int): Iterator[Int] =
     Iterator.tabulate(bands) { b => bandHash(sketchArray, idx, b) }
@@ -817,6 +818,7 @@ final case class BitLSH(
 
   def withConfig(newCfg: LSHCfg): BitLSH = copy(cfg = newCfg)
   def withReverseMapping = copy(reverseIdxs = LSH.makeReverseMapping(length, bands, idxs))
+  def hasReverseMapping = reverseIdxs != null
 
   def bandHashes(sketchArray: Array[Long], idx: Int): Iterator[Int] =
     Iterator.tabulate(bands) { b => LSH.ripBits(sketchArray, bitsPerSketch, idx, b, bandBits) }
