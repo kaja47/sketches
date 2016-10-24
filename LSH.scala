@@ -253,10 +253,10 @@ object LSH {
     new IntLSH(sk, sk.estimator, LSHCfg(), idxs, revmap, sk.length, sk.sketchLength, bands, bandElements, hashBits)
   }
 
-  def hashSlice(sketchArray: Array[Int], sketchLength: Int, i: Int, band: Int, bandLength: Int, hashBits: Int) = {
+  def hashSlice(skarr: Array[Int], sketchLength: Int, i: Int, band: Int, bandLength: Int, hashBits: Int) = {
     val start = i * sketchLength + band * bandLength
     val end   = start + bandLength
-    _hashSlice(sketchArray, start, end) & ((1 << hashBits) - 1)
+    _hashSlice(skarr, start, end) & ((1 << hashBits) - 1)
   }
 
 
