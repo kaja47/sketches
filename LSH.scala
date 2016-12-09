@@ -126,7 +126,8 @@ object LSH {
     apply(sk, bands, LSHBuildCfg())
 
   def apply(sk: BitSketching, bands: Int, cfg: LSHBuildCfg): BitLSH = {
-    require(sk.sketchLength % 64 == 0 && bands > 0, "BitLSH must have multiple of 64 hashes for now")
+    require(sk.sketchLength % 64 == 0, "BitLSH must have multiple of 64 hashes for now")
+    require(bands > 0, "number of bands must be non-negative")
 
     val bandBits = sk.sketchLength / bands
     val bandMask = (1L << bandBits) - 1
@@ -197,7 +198,8 @@ object LSH {
     apply(sk, bands, hashBits, LSHBuildCfg())
 
   def apply(sk: IntSketching, bands: Int, hashBits: Int, cfg: LSHBuildCfg): IntLSH = {
-    require(bands > 0 && hashBits > 0)
+    require(hashBits > 0, "number of hash buts must be non-negative")
+    require(bands > 0, "number of bands must be non-negative")
 
     val bandElements = sk.sketchLength / bands // how many elements from sketch is used in one band
     val hashMask = (1 << hashBits) - 1
