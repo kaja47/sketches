@@ -7,6 +7,8 @@ import VPTree._
 
 /** VP-tree (vantage point tree) is a datastructure that can be used for
   * nearest-neighbour queries in arbitrary metric space.
+  *
+  * TODO http://boytsov.info/pubs/nips2013.pdf
   */
 final class VPTree[T](val root: Tree[T], val distance: Distance[T]) {
   def approximateNearest(t: T): T = root.approxNear(t, distance)
