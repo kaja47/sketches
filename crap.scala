@@ -61,6 +61,12 @@ trait Cursor[@spec(Int, Long, Float, Double) V] {
   def value: V
 }
 
+class ArrayCursor[@spec(Int, Long, Float, Double) V](arr: Array[V]) extends Cursor[V] {
+  private var pos = -1
+  def moveNext(): Boolean = { pos += 1 ; pos < arr.length }
+  def value: V = arr(pos)
+}
+
 trait Cursor2[@spec(Int, Long, Float, Double) K, @spec(Int, Long, Float, Double) V] { self =>
   def moveNext(): Boolean
   def key: K
