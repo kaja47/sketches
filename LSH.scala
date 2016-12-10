@@ -400,9 +400,9 @@ abstract class LSH { self =>
   def rawCandidateIndexes(sketch: Sketching, skidx: Int): Array[Idxs] = rawCandidateIndexes(sketch.getSketchFragment(skidx), 0)
   def rawCandidateIndexes(idx: Int): Array[Idxs] = rawCandidateIndexes(sketch.getSketchFragment(idx), 0)
 
-  //def candidateIndexes(skarr: SketchArray, idx: Int): Idxs = fastSparse.union(rawCandidateIndexes(sketch, idx))
-  //def candidateIndexes(sketch: Sketching, idx: Int): Idxs = candidateIndexes(sketch.getSketchFragment(idx), 0)
-  //def candidateIndexes(idx: Int): Idxs = candidateIndexes(sketch.sketchArray, idx)
+  def candidateIndexes(skarr: SketchArray, idx: Int): Idxs = fastSparse.union(rawCandidateIndexes(skarr, idx))
+  def candidateIndexes(sketch: Sketching, idx: Int): Idxs = fastSparse.union(rawCandidateIndexes(sketch, idx))
+  def candidateIndexes(idx: Int): Idxs = fastSparse.union(rawCandidateIndexes(idx))
 
   // If minEst is set to Double.NegativeInfinity, no estimates are computed.
   // Instead candidates are directly filtered through similarity function.
