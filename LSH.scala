@@ -5,7 +5,7 @@ import java.util.concurrent.{ CopyOnWriteArrayList, ThreadLocalRandom }
 import java.lang.Math.{ pow, log, max, min }
 import scala.util.hashing.MurmurHash3
 import scala.collection.{ mutable, GenSeq }
-import scala.collection.mutable.ArrayBuilder
+import scala.collection.mutable.{ ArrayBuilder, ArrayBuffer }
 import scala.language.postfixOps
 
 
@@ -212,7 +212,7 @@ object LSH {
       val scratchpads = Array.ofDim[Int](cfg.bandsInOnePass, bandElements)
       val skslices    = bs map { b => sk.slice(b * bandElements, (b+1) * bandElements) } toArray
 
-      def runItems(f: (Int, Int) => Unit) = {
+      def runItems(f: (Int, Int) => Unit, g: (Int, Array[Int], Int) => Unit = null) = {
         val base = bs(0)
         val end = bs.last
         var i = 0 ; while (i < sk.length) { // iterate over all items
@@ -225,7 +225,14 @@ object LSH {
               skslices(b-base).writeSketchFragment(i, scratchpads(b-base), 0)
               hashSlice(scratchpads(b-base), bandElements, 0, 0, bandElements, hashBits)
             }
-            f((b - base) * bandSize + h, i)
+
+            if (f != null) {
+              f((b - base) * bandSize + h, i)
+            }
+            if (g != null) {
+              val sk = skslices(b-base).getSketchFragment(i)
+              g(b, sk, i)
+            }
             b += 1
           }
           i += 1
@@ -486,7 +493,7 @@ abstract class LSH { self =>
       if (minEst == LSH.NoEstimate) {
         requireSimFun(f)
         rawStreamIndexes flatMap { idxs =>
-          val res = collection.mutable.ArrayBuffer[Sim]()
+          val res = ArrayBuffer[Sim]()
           var i = 0 ; while (i < idxs.length) {
             var j = i+1 ; while (j < idxs.length) {
               var sim: Double = 0.0
@@ -504,7 +511,7 @@ abstract class LSH { self =>
         val minBits = estimator.minSameBits(minEst)
         val skarr = requireSketchArray()
         rawStreamIndexes flatMap { idxs =>
-          val res = collection.mutable.ArrayBuffer[Sim]()
+          val res = ArrayBuffer[Sim]()
           var i = 0 ; while (i < idxs.length) {
             var j = i+1 ; while (j < idxs.length) {
               val bits = estimator.sameBits(skarr, idxs(i), skarr, idxs(j))
@@ -710,46 +717,35 @@ abstract class LSH { self =>
     * both similarity and it's estimate at the same time. Drawback is the fact
     * that the IRB is internally using float instead of double and therefore
     * the result might have slightly lower accuracy. */
-  protected def indexResultBuilderToSims(idx: Int, irb: IndexResultBuilder, f: SimFun, noEstimates: Boolean): Iterator[Sim] =
+  protected def indexResultBuilderToSims(idx: Int, irb: IndexResultBuilder, f: SimFun, noEstimates: Boolean): Iterator[Sim] = {
+    val cur = irb.idxSimCursor
+    val res = new ArrayBuffer[Sim](initialSize = irb.size)
+
     if (noEstimates && f != null) {
-      mkSims(irb) { (cur, res) =>
-        while (cur.moveNext()) {
-          res += Sim(idx, cur.key, 0.0, cur.value)
-        }
+      while (cur.moveNext()) {
+        res += Sim(idx, cur.key, 0.0, cur.value)
       }
 
     } else if (!noEstimates && f == null) {
-      mkSims(irb) { (cur, res) =>
-        while (cur.moveNext()) {
-          res += Sim(idx, cur.key, cur.value, cur.value)
-        }
+      while (cur.moveNext()) {
+        res += Sim(idx, cur.key, cur.value, cur.value)
       }
 
     } else if (!noEstimates && f != null && cfg.orderByEstimate) {
-      mkSims(irb) { (cur, res) =>
-        while (cur.moveNext()) {
-          res += Sim(idx, cur.key, cur.value, f(idx, cur.key))
-        }
+      while (cur.moveNext()) {
+        res += Sim(idx, cur.key, cur.value, f(idx, cur.key))
       }
 
     } else if (!noEstimates && f != null) {
       val skarr = requireSketchArray()
-      mkSims(irb) { (cur, res) =>
-        while (cur.moveNext()) {
-          val est = estimator.estimateSimilarity(skarr, idx, skarr, cur.key)
-          res += Sim(idx, cur.key, est, cur.value)
-        }
+      while (cur.moveNext()) {
+        val est = estimator.estimateSimilarity(skarr, idx, skarr, cur.key)
+        res += Sim(idx, cur.key, est, cur.value)
       }
     } else {
       sys.error("this should not happen")
     }
-
-  protected def mkSims(irb: IndexResultBuilder)(f: (Cursor2[Int, Float], ArrayBuilder.ofRef[Sim]) => Unit): Iterator[Sim] = {
-    val cur = irb.idxSimCursor
-    val res = new ArrayBuilder.ofRef[Sim]
-    res.sizeHint(irb.size)
-    f(cur, res)
-    res.result.iterator
+    res.iterator
   }
 
   protected def parallelBatches[T, U](xs: Iterator[T], inParallel: Boolean, batchSize: Int = 1024)(f: T => U): Iterator[U] =
