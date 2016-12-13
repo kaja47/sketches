@@ -28,6 +28,30 @@ object BloomFilter {
 }
 
 
+trait Bloomy[T] {
+
+  def add(x: T): this.type
+
+  def contains(x: T): Boolean
+
+  /** Return true if x is in the Bloom filter. If it's not present, the method
+    * adds x into the set. This precise behaviour makes no difference for
+    * ordinary Bloom filters but it have effects for counting bloom filters.
+    **/
+  def getAndSet(x: T): Boolean = {
+    val res = contains(x)
+    if (!res) {
+      add(x)
+    }
+    res
+  }
+
+  def += (x: T): this.type = add(x)
+  def apply(x: T) = contains(x)
+
+}
+
+
 /** A Bloom filter is a space-efficient probabilistic data structure, that is
   * used for set membership queries.  It might give a false positive, but never
   * false negative. That is, if bf.contains(x) returns false, element x is
@@ -39,7 +63,7 @@ object BloomFilter {
   * This implementation tends to overshoot and provides better guarantees by
   * rounding up size of a underlying bit array to the nearest power of two.
   */
-class BloomFilter[@scala.specialized(Int, Long) T](val hashFunctions: Int, val bitLength: Int) extends (T => Boolean) {
+class BloomFilter[@scala.specialized(Int, Long) T](val hashFunctions: Int, val bitLength: Int) extends (T => Boolean) with Bloomy[T] {
 
   require(hashFunctions > 0, "number of hash functions must be greater than zero")
   require(bitLength >= 64, "length of a bloom filter must be at least 64 bits")
@@ -55,9 +79,6 @@ class BloomFilter[@scala.specialized(Int, Long) T](val hashFunctions: Int, val b
 
   protected val fs =
     Array.tabulate[HashFunc[Int]](hashFunctions)(i => HashFunc.random(i * 4747))
-
-  def += (x: T): this.type = add(x)
-  def apply(x: T) = contains(x)
 
   def add(x: T): this.type = {
     var i = 0
@@ -85,7 +106,7 @@ class BloomFilter[@scala.specialized(Int, Long) T](val hashFunctions: Int, val b
   }
 
 
-  def getAndSet(x: T): Boolean = {
+  override def getAndSet(x: T): Boolean = {
     var isSet = true
 
     var i = 0
@@ -107,6 +128,9 @@ class BloomFilter[@scala.specialized(Int, Long) T](val hashFunctions: Int, val b
   def falsePositiveRate(n: Int) =
     pow(1.0 - pow(1.0 - 1.0 / bitLength, hashFunctions * n), hashFunctions)
 
-  def sizeBytes = arr.length * 8
+  def sizeInBytes = arr.length * 8
+
+  override def toString =
+    s"BloomFilter(hashFunctions = $hashFunctions, bitLength = $bitLength)"
 
 }
