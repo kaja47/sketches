@@ -28,7 +28,7 @@ object BloomFilter {
 }
 
 
-trait Bloomy[T] {
+trait Bloomy[@scala.specialized(Int, Long) T] {
 
   def add(x: T): this.type
 
@@ -63,14 +63,16 @@ trait Bloomy[T] {
   * This implementation tends to overshoot and provides better guarantees by
   * rounding up size of a underlying bit array to the nearest power of two.
   */
-class BloomFilter[@scala.specialized(Int, Long) T](val hashFunctions: Int, val bitLength: Int) extends (T => Boolean) with Bloomy[T] {
+class BloomFilter[@scala.specialized(Int, Long) T](
+    val hashFunctions: Int, val bitLength: Int
+  ) extends (T => Boolean) with Bloomy[T] {
 
   require(hashFunctions > 0, "number of hash functions must be greater than zero")
   require(bitLength >= 64, "length of a bloom filter must be at least 64 bits")
   require((bitLength & (bitLength - 1)) == 0, "length of a bloom filter must be power of 2")
 
-  private[this] val arr = new Array[Long](bitLength / 64)
-  private[this] val mask = bitLength - 1
+  private val arr = new Array[Long](bitLength / 64)
+  private val mask = bitLength - 1
 
   protected def elemHashCode(x: T) = x.hashCode
 
@@ -132,5 +134,43 @@ class BloomFilter[@scala.specialized(Int, Long) T](val hashFunctions: Int, val b
 
   override def toString =
     s"BloomFilter(hashFunctions = $hashFunctions, bitLength = $bitLength)"
+
+  def approximateSize = {
+    var bitsSet = 0
+    var i = 0 ; while (i < arr.length) {
+      bitsSet += java.lang.Long.bitCount(arr(i))
+      i += 1
+    }
+
+    - bitLength.toDouble / hashFunctions * math.log(1 - bitsSet.toDouble / bitLength)
+  }
+
+
+  def union(bf: BloomFilter[T]): BloomFilter[T] = {
+    require(hashFunctions == bf.hashFunctions && bitLength == bf.bitLength,
+      "Cannot unite bloom filters with different number of hash functions and lengths")
+
+    val res = new BloomFilter[T](hashFunctions, bitLength)
+    var i = 0 ; while (i < res.arr.length) {
+      res.arr(i) = arr(i) | bf.arr(i);
+      i += 1
+    }
+
+    res
+  }
+
+
+  def intersection(bf: BloomFilter[T]): BloomFilter[T] = {
+    require(hashFunctions == bf.hashFunctions && bitLength == bf.bitLength,
+      "Cannot intersect bloom filters with different number of hash functions and lengths")
+
+    val res = new BloomFilter[T](hashFunctions, bitLength)
+    var i = 0 ; while (i < res.arr.length) {
+      res.arr(i) = arr(i) & bf.arr(i);
+      i += 1
+    }
+
+    res
+  }
 
 }
