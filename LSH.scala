@@ -333,7 +333,7 @@ abstract class LSH { self =>
   type SimFun = (Int, Int) => Double
 
   def sketch: Sketching // might be null
-  def length: Int
+  def itemsCount: Int
   def estimator: Estimator[SketchArray]
   def cfg: LSHCfg
   def bands: Int
@@ -374,7 +374,7 @@ abstract class LSH { self =>
       apply(sketch.getSketchFragment(idx), 0, idx, minEst, minSim, f)
 
     def apply(idx: Int, minEst: Double, minSim: Double, f: SimFun): Res = {
-      require(idx >= 0 && idx < length, s"index $idx is out of range (0 until $length)")
+      require(idx >= 0 && idx < itemsCount, s"index $idx is out of range (0 until $itemsCount)")
 
       if (hasReverseMapping) {
         apply(rawCandidateIndexes(idx), idx, minEst, minSim, f)
@@ -468,7 +468,7 @@ abstract class LSH { self =>
   val allSimilarIndexes = new BulkQuery[Iterator[(Int, Idxs)]] {
     def apply(minEst: Double, minSim: Double, f: SimFun) =
       (cfg.compact, cfg.parallel) match {
-        case (true, par) => parallelBatches(0 until length iterator, par) { idx => (idx, similarIndexes(idx, minEst, minSim, f)) }
+        case (true, par) => parallelBatches(0 until itemsCount iterator, par) { idx => (idx, similarIndexes(idx, minEst, minSim, f)) }
         case (false, _)  => _allSimilar_notCompact(minEst, minSim, f) map { case (idx, res) => (idx, res.result) }
       }
   }
@@ -476,7 +476,7 @@ abstract class LSH { self =>
   val allSimilarItems = new BulkQuery[Iterator[(Int, Iterator[Sim])]] {
     def apply(minEst: Double, minSim: Double, f: SimFun) = {
       (cfg.compact, cfg.parallel) match {
-        case (true, par) => parallelBatches(0 until length iterator, par) { idx => (idx, similarItems(idx, minEst, minSim, f)) }
+        case (true, par) => parallelBatches(0 until itemsCount iterator, par) { idx => (idx, similarItems(idx, minEst, minSim, f)) }
         case (false, _)  =>
           if (cfg.orderByEstimate) require(minEst != LSH.NoEstimate, "For orderByEstimate to work estimation must not be disabled.")
           val ff = if (cfg.orderByEstimate) null else f
@@ -563,8 +563,8 @@ abstract class LSH { self =>
       requireSimFun(f)
       runLoopNoEstimate(idx, candidates, minSim, f, res)
     } else {
-      val sketch = requireSketchArray()
-      runLoopYesEstimate(idx, candidates, sketch, minEst, minSim, f, res)
+      val skarr = requireSketchArray()
+      runLoopYesEstimate(idx, candidates, skarr, minEst, minSim, f, res)
     }
 
   private def runLoopNoEstimate(idx: Int, candidates: Idxs, minSim: Double, f: SimFun, res: IndexResultBuilder) = {
@@ -596,7 +596,7 @@ abstract class LSH { self =>
 
     // maxCandidates option is simulated via sampling
     val comparisons = streamIndexes.map { idxs => (idxs.length.toDouble - 1) * idxs.length / 2 } sum
-    val ratio = length.toDouble * cfg.maxCandidates / comparisons
+    val ratio = itemsCount.toDouble * cfg.maxCandidates / comparisons
     assert(ratio >= 0)
 
     if (minSim == LSH.NoEstimate) requireSimFun(f)
@@ -610,7 +610,7 @@ abstract class LSH { self =>
 
       val tl = new ThreadLocal[Array[IndexResultBuilder]] {
         override def initialValue = {
-          val local = Array.fill(length)(newIndexResultBuilder(distinct = true, truncatedResultSize))
+          val local = Array.fill(itemsCount)(newIndexResultBuilder(distinct = true, truncatedResultSize))
           partialResults.add(local)
           local
         }
@@ -623,23 +623,23 @@ abstract class LSH { self =>
         }
       }
 
-      val idxsArr = new Array[IndexResultBuilder](length)
+      val idxsArr = new Array[IndexResultBuilder](itemsCount)
       val pr = partialResults.toArray(Array[Array[IndexResultBuilder]]())
-      (0 until length).par foreach { i =>
+      (0 until itemsCount).par foreach { i =>
         val target = newIndexResultBuilder(distinct = true)
         for (p <- pr) target ++= p(i)
         idxsArr(i) = target
 
         for (p <- pr) p(i) = null
       }
-      Iterator.tabulate(length) { idx => (idx, idxsArr(idx)) }
+      Iterator.tabulate(itemsCount) { idx => (idx, idxsArr(idx)) }
 
     } else {
-      val res = Array.fill(length)(newIndexResultBuilder(distinct = true))
+      val res = Array.fill(itemsCount)(newIndexResultBuilder(distinct = true))
       for (idxs <- streamIndexes) {
         runTile(idxs, ratio, minEst, minSim, f, res)
       }
-      Iterator.tabulate(length) { idx => (idx, res(idx)) }
+      Iterator.tabulate(itemsCount) { idx => (idx, res(idx)) }
     }
 
   }
@@ -769,7 +769,7 @@ final case class IntLSH(
     sketch: IntSketching, estimator: IntEstimator, cfg: LSHCfg,
     idxs: Array[Array[Int]],        // mapping from a bucket to item idxs that hash into it
     reverseIdxs: Array[Array[Int]], // mapping from a item idx to buckets in which it's located
-    length: Int,
+    itemsCount: Int,
     sketchLength: Int, bands: Int, bandLength: Int, hashBits: Int
   ) extends LSH with Serializable {
 
@@ -777,7 +777,7 @@ final case class IntLSH(
   type Sketching = IntSketching
 
   def withConfig(newCfg: LSHCfg): IntLSH = copy(cfg = newCfg)
-  def withReverseMapping = copy(reverseIdxs = LSH.makeReverseMapping(length, bands, idxs))
+  def withReverseMapping = copy(reverseIdxs = LSH.makeReverseMapping(itemsCount, bands, idxs))
   def hasReverseMapping = reverseIdxs != null
 
   def bandHashes(sketchArray: SketchArray, idx: Int): Iterator[Int] =
@@ -807,7 +807,7 @@ final case class BitLSH(
     sketch: BitSketching, estimator: BitEstimator, cfg: LSHCfg,
     idxs: Array[Array[Int]],        // mapping from a bucket to item idxs that hash into it
     reverseIdxs: Array[Array[Int]], // mapping from a item idx to buckets in which it's located
-    length: Int,
+    itemsCount: Int,
     bitsPerSketch: Int, bands: Int, bandBits: Int
   ) extends LSH with Serializable {
 
@@ -815,7 +815,7 @@ final case class BitLSH(
   type Sketching = BitSketching
 
   def withConfig(newCfg: LSHCfg): BitLSH = copy(cfg = newCfg)
-  def withReverseMapping = copy(reverseIdxs = LSH.makeReverseMapping(length, bands, idxs))
+  def withReverseMapping = copy(reverseIdxs = LSH.makeReverseMapping(itemsCount, bands, idxs))
   def hasReverseMapping = reverseIdxs != null
 
   def bandHashes(sketchArray: Array[Long], idx: Int): Iterator[Int] =
