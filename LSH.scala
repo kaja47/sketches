@@ -693,7 +693,6 @@ abstract class LSH { self =>
             var sim = 0.0
             if (bits >= minBits && (f == null || { sim = f(idxs(i), idxs(j)) ; sim >= minSim })) {
               sim = if (f == null) estimator.estimateSimilarity(bits) else sim
-              sim += 0.0
               res(idxs(i)) += (idxs(j), sim)
               res(idxs(j)) += (idxs(i), sim)
             }
