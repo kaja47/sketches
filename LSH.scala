@@ -351,7 +351,7 @@ abstract class LSH { self =>
     1.0 - pow(1.0 - pow(sim, bandLen), bands)
   }
 
-  val estimatedThreshold = {
+  def estimatedThreshold = {
     val bandLen = estimator.sketchLength / bands
     pow(1.0 / bands, 1.0 / bandLen)
   }
