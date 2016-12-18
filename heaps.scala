@@ -1,8 +1,9 @@
 package atrox
 
+import java.lang.Math
+import sketch.HashFunc
 
 object TopKFloatIntEstimate {
-  import sketch.HashFunc
   protected[atrox] val hf = Array.tabulate[HashFunc[Int]](256)(i => HashFunc.random(i * 4747))
 }
 
@@ -13,10 +14,15 @@ object TopKFloatIntEstimate {
  * - http://www.sebastiansylvan.com/post/robin-hood-hashing-should-be-your-default-hash-table-implementation/
  * - https://www.pvk.ca/Blog/more_numerical_experiments_in_hashing.html
  * */
-class TopKFloatIntEstimate(k: Int, hashFunctions: Int, oversample: Int = 0) { self =>
+class TopKFloatIntEstimate(k: Int, hf: Array[HashFunc[Int]], numberOfFunctions: Int, oversample: Int) { self =>
+
+  def this(k: Int, numberOfFunctions: Int, oversample: Int = 0) =
+    this(k, TopKFloatIntEstimate.hf, numberOfFunctions, oversample)
+
+  val hashFunctions = numberOfFunctions
 
   require(k > 0)
-  require(hashFunctions < TopKFloatIntEstimate.hf.length)
+  require(hashFunctions < hf.length)
 
   private[this] val kpow = Bits.higherPowerOfTwo(math.max(k, oversample))
   private[this] val arr = {
@@ -25,9 +31,11 @@ class TopKFloatIntEstimate(k: Int, hashFunctions: Int, oversample: Int = 0) { se
     arr
   }
   private[this] var min = Long.MinValue
+  private[this] var _size = 0
 
   private def f(h: Int, pair: Long) =
-    TopKFloatIntEstimate.hf(h)(keyint(pair) ^ value(pair)) & (kpow - 1)
+    hf(h)(keyint(pair) ^ value(pair))
+    //TopKFloatIntEstimate.hf(h)(keyint(pair) ^ value(pair)) & (kpow - 1)
 
   private def place(_pair: Long, h: Int): Unit = {
     var pair = _pair
@@ -38,7 +46,14 @@ class TopKFloatIntEstimate(k: Int, hashFunctions: Int, oversample: Int = 0) { se
         val oldPair = arr(pos)
         arr(pos) = pair
         if (oldPair <= min) {   // less then or equal comparison is there for handling array initialized to MinValue
-          min = findMin()       // just removed current minimum, find a new one, this should be triggered rarely enough (1/kpow?)
+          if (oldPair == Long.MinValue) { // replacing an empty slot
+            _size += 1
+          }
+
+          // just removed current minimum, find a new one, this should be triggered rarely enough (1/kpow?)
+          if (_size >= kpow) {
+            min = findMin()
+          }
           return                // encountered smaller value, it's not necessary to try to place it somewhere else
         }
         //place(oldPair, h)       // place old value
@@ -51,10 +66,14 @@ class TopKFloatIntEstimate(k: Int, hashFunctions: Int, oversample: Int = 0) { se
     }
   }
 
+  def keyThreshold  = if (min == Long.MinValue) Float.MinValue else key(min)
+
+  def size = _size // Math.min(_size, k)
+
   protected def findMin() = {
     var min = Long.MaxValue
     var i = 0; while (i < arr.length) {
-      min = java.lang.Math.min(min, arr(i))
+      min = Math.min(min, arr(i))
       i += 1
     }
     min
@@ -103,6 +122,81 @@ class TopKFloatIntEstimate(k: Int, hashFunctions: Int, oversample: Int = 0) { se
 }
 
 
+class BruteForceTopKFloatInt(k: Int) { self =>
+  val arr = new Array[Long](k) // sorted from smallest to biggest value
+  java.util.Arrays.fill(arr, Long.MinValue)
+  var top = 0
+
+  def size = top
+
+  def insert(key: Float, value: Int): Unit =
+    insertPair(pack(key, value))
+
+  protected def insertPair(pair: Long): Unit =
+    if (top < k) {
+      arr(top) = pair
+      top += 1
+
+      if (top == arr.length) {
+        java.util.Arrays.sort(arr)
+      }
+
+    } else if (pair > arr(0)) {
+      var i = 0
+      while (i < k && arr(i) < pair) { i += 1 }
+
+      if (i > arr.length) return
+      if (i < arr.length && arr(i) == pair) return
+      val end = i
+
+      i = 1
+      while (i < end) { arr(i-1) = arr(i) ; i += 1 }
+
+      arr(end-1) = pair
+    }
+
+  def += (key: Float, value: Int) = insert(key, value)
+
+  def ++= (tk: BruteForceTopKFloatInt): Unit = {
+    var i = tk.top - 1; while (i >= 0) {
+      insertPair(tk.arr(i))
+      i -= 1
+    }
+  }
+
+  def minKey = key(arr(0))
+
+  def drainToArray(): Array[Int] = {
+    val res = new Array[Int](size)
+    var i = 0 ; while (i < size) {
+      res(i) = value(arr(i))
+      i += 1
+    }
+    java.util.Arrays.fill(arr, Long.MinValue)
+    res
+  }
+
+  def cursor = new Cursor2[Float, Int] {
+    private var pos = -1
+    def moveNext() = { pos += 1 ; pos < top }
+    def key = self.key(arr(pos))
+    def value = self.value(arr(pos))
+  }
+
+  def valuesCursor = cursor.asValues
+
+  private def swap(arr: Array[Long], a: Int, b: Int) = {
+    val tmp = arr(a)
+    arr(a) = arr(b)
+    arr(b) = tmp
+  }
+
+  private def pack(key: Float, value: Int) = Bits.packSortable(key, value)
+  private def keyint(pair: Long): Int   = Bits.unpackIntHi(pair)
+  private def key   (pair: Long): Float = Bits.unpackSortableFloatHi(pair)
+  private def value (pair: Long): Int   = Bits.unpackIntLo(pair)
+}
+
 
 class TopKFloatInt(k: Int, distinct: Boolean = false) extends BaseMinFloatIntHeap(k) {
 //  private var valueSet: IntSet = if (distinct) new IntSet() else null
@@ -147,10 +241,10 @@ class TopKFloatInt(k: Int, distinct: Boolean = false) extends BaseMinFloatIntHea
 
   def += (key: Float, value: Int) = insert(key, value)
 
-  def ++= (tk: TopKFloatInt) {
+  def ++= (tk: TopKFloatInt): Unit = {
     // backwrds iterations because that way heap is filled by big values and
     // rest is filered out by `key > min` condition in the insert method
-    var i = tk.top - 1; while (i >= 1) {
+    var i = tk.top - 1; while (i >= 1) { // TODO why >= 1 ?
       val key = Bits.sortableIntToFloat(high(tk.arr(i)))
       val value = low(tk.arr(i))
       insert(key, value)
@@ -227,11 +321,12 @@ class MinIntIntHeapBuilder(capacity: Int) {
   }
 }
 
-abstract class BaseMinIntIntHeap(val capacity: Int) {
-
   // Both key and index are packed inside one Long value.
   // Key which is used for comparison forms high 4 bytes of said Long.
-  protected val arr = new Array[Long](capacity)
+abstract class BaseMinIntIntHeap protected (protected val arr: Array[Long], val capacity: Int) {
+
+  def this(capacity: Int) = this(new Array[Long](capacity), capacity)
+
   // top points behind the last element
   protected var top = 0
 
