@@ -19,7 +19,6 @@ trait IndexResultBuilder {
   def ++= (rb: IndexResultBuilder): Unit
   def result: Array[Int]
   def idxSimCursor: Cursor2[Int, Float]
-  def minLowerBound: Float
 }
 
 class AllIndexResultBuilder(distinct: Boolean) extends IndexResultBuilder {
@@ -55,7 +54,6 @@ class AllIndexResultBuilder(distinct: Boolean) extends IndexResultBuilder {
     def key   = Bits.unpackIntHi(arr(pos))
     def value = Bits.unpackFloatLo(arr(pos))
   }
-  def minLowerBound: Float = Float.MinValue
 }
 
 class TopKIndexResultBuilder(k: Int, distinct: Boolean) extends IndexResultBuilder {
@@ -79,7 +77,6 @@ class TopKIndexResultBuilder(k: Int, distinct: Boolean) extends IndexResultBuild
 
   def result = if (res == null) Array() else res.drainToArray()
   def idxSimCursor = { createTopK() ; res.cursor.swap }
-  def minLowerBound: Float = if (res == null || res.size != k) Float.MinValue else res.minKey
 }
 
 class TopKEstimateIndexResultBuilder(k: Int) extends IndexResultBuilder {
@@ -103,5 +100,4 @@ class TopKEstimateIndexResultBuilder(k: Int) extends IndexResultBuilder {
 
   def result = if (res == null) Array() else res.drainToArray()
   def idxSimCursor = { createTopK() ; res.cursor.swap }
-  def minLowerBound: Float = if (res == null) Float.MinValue else res.keyThreshold
 }
