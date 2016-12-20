@@ -287,14 +287,18 @@ object LSH {
   }
 
 
-  def makeReverseMapping(length: Int, bands: Int, idxs: Array[Array[Int]]) = {
+  def makeReverseMapping(length: Int, bands: Int, idxs: Array[Array[Int]]): Array[Array[Int]] =
+    makeReverseMapping(length, bands, idxs, idxs.length)
+
+  def makeReverseMapping(length: Int, bands: Int, idxs: Int => Array[Int], idxsLength: Int): Array[Array[Int]] = {
     val revmap = Array.fill(length) {
       val ab = new ArrayBuilder.ofInt
       ab.sizeHint(bands)
       ab
     }
 
-    for ((bucket, bidx) <- idxs.zipWithIndex) {
+    for (bidx <- 0 until idxsLength) {
+      val bucket = idxs(bidx)
       if (bucket != null) {
         var i = 0; while (i < bucket.length) {
           revmap(bucket(i)) += bidx
