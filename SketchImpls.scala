@@ -19,8 +19,7 @@ object MinHash {
   implicit class IntArrayMinHasher(f: HashFunc[Int]) extends MinHasher[Array[Int]] {
     def apply(set: Array[Int]): Int = {
       var min = Int.MaxValue
-      var j = 0
-      while (j < set.length) {
+      var j = 0 ; while (j < set.length) {
         min = math.min(min, f(set(j)))
         j += 1
       }
@@ -32,8 +31,7 @@ object MinHash {
     def apply(set: Traversable[T]): Int = {
       var min = Int.MaxValue
       for (el <- set) {
-        val h = f(el.hashCode)
-        if (h < min) { min = h }
+        min = math.min(min, f(el.hashCode))
       }
       min
     }
@@ -72,8 +70,7 @@ object WeightedMinHash {
       var j = 0 ; while (j < set.length) {
         var h = set(j)
         var i = 0 ; while (i < weights(j)) {
-          h = f(h)
-          if (h < min) { min = h }
+          min = math.min(min, f(h))
           i += 1
         }
         j += 1
@@ -89,8 +86,7 @@ object WeightedMinHash {
       for (el <- set) {
         var h = el.hashCode
         for (_ <- 0 until weights(el)) {
-          h = f(h)
-          if (h < min) { min = h }
+          min = math.min(min, f(h))
         }
       }
       min
@@ -301,16 +297,14 @@ object SimHash {
 
     for (x <- xs) {
       val l = f(x)
-      var i = 0
-      while (i < 64) {
+      var i = 0 ; while (i < 64) {
         counts(i) += (if ((l & (1 << i)) != 0) 1 else -1)
         i += 1
       }
     }
 
     var hash = 0L
-    var i = 0
-    while (i < 64) {
+    var i = 0 ; while (i < 64) {
       if (counts(i) > 0) {
         hash |= 1L << i
       }
