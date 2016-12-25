@@ -3,6 +3,7 @@ package atrox.sketch
 import java.lang.System.arraycopy
 import java.lang.Long.{ bitCount, rotateLeft }
 import java.util.Arrays
+import atrox.Bits
 
 
 // Sketcher: one locality sensitive hash function
@@ -507,19 +508,6 @@ case class BitSketch[T](
 
   def empty = copy(sketchArray = null)
 
-  def getSketchFragment(itemIdx: Int, from: Int, to: Int): Array[Long] = {
-    val res = new Array[Long]((to-from+63)/64)
-    var i = 0
-    var j = from
-
-    while (j < to) {
-      val ii = itemIdx * bitsPerSketch + j
-      val bit = (sketchArray(ii / 64) >>> (ii % 64)) & 1L
-      res(i / 64) |= (bit << (i % 64))
-      i += 1
-      j += 1
-    }
-
-    res
-  }
+  def getSketchFragment(itemIdx: Int, from: Int, to: Int): Array[Long] =
+    Bits.getBits(sketchArray, itemIdx * bitsPerSketch + from, itemIdx * bitsPerSketch + to)
 }

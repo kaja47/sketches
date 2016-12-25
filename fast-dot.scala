@@ -428,6 +428,21 @@ object Bits {
   import java.lang.Float. { floatToRawIntBits, intBitsToFloat }
   import java.lang.Integer.highestOneBit
 
+  def getBits(arr: Array[Long], from: Int, to: Int): Array[Long] = {
+    val res = new Array[Long]((to-from+63)/64)
+    var i = 0
+    var j = from
+
+    while (j < to) {
+      val bit = (arr(j / 64) >>> (j % 64)) & 1L
+      res(i / 64) |= (bit << (i % 64))
+      i += 1
+      j += 1
+    }
+
+    res
+  }
+
   /** Extract up to 64 bits from a long array. The array is split into number of
     * blocks of length `blockLen`. Bits may span two neighbouring array
     * elements. Requested bits that overrun block length are extracted from the
