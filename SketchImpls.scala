@@ -279,19 +279,18 @@ object HammingDistance {
 
 object SimHash {
 
-
-  def apply[T](f: HashFuncLong[T]) =
+  def apply[T](implicit f: HashFuncLong[T]): BitSketchers[Array[T]] =
     new BitSketchers[Array[T]] {
       val sketchLength = 64
       val estimator = HammingDistance.Estimator(64)
       def getSketchFragment(item: Array[T], from: Int, to: Int): Array[Long] = {
         require(from == 0 && to == 64)
-        Array[Long](mkSimHash64(item, f))
+        Array[Long](doSimHash64(item, f))
       }
     }
 
 
-  val md5 = new HashFuncLong[String] {
+  implicit def md5 = new HashFuncLong[String] {
     def apply(x: String): Long = {
       val m = java.security.MessageDigest.getInstance("MD5")
       val bytes = m.digest(x.getBytes())
@@ -299,7 +298,7 @@ object SimHash {
     }
   }
 
-  def mkSimHash64[T](xs: Array[T], f: HashFuncLong[T]): Long = {
+  private def doSimHash64[T](xs: Array[T], f: HashFuncLong[T]): Long = {
 
     val counts = new Array[Int](64)
 
