@@ -497,9 +497,9 @@ case class BitSketch[T](
 ) extends Sketch[Array[Long]] with BitSketching {
 
   val sketchLength = sketchers.sketchLength
-  def itemsCount = sketchArray.length * 64 / sketchLength
+  val itemsCount = sketchArray.length * 64 / sketchLength
   val estimator = sketchers.estimator
-  def bitsPerSketch = sketchLength
+  val bitsPerSketch = sketchLength
 
   def withConfig(_cfg: SketchCfg): BitSketch[T] = copy(cfg = _cfg)
 
