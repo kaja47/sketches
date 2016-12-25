@@ -8,7 +8,7 @@ import breeze.stats.distributions.Rand
 
 object MinHash {
 
-  def apply[T](hashFunctions: Int)(implicit mk: HashFunc[Int] => MinHasher[T]) =
+  def apply[T](hashFunctions: Int)(implicit mk: HashFunc[Int] => MinHasher[T]): IntSketchers[T] =
     Sketchers(hashFunctions, (i: Int) => mk(HashFunc.random(i*1000)), Estimator(hashFunctions))
 
 
@@ -54,7 +54,7 @@ object MinHash {
 /** based on https://www.sumologic.com/2015/10/22/rapid-similarity-search-with-weighted-min-hash/ */
 object WeightedMinHash {
 
-  def apply[T, W](hashFunctions: Int, weights: W)(implicit mk: ((HashFunc[Int], W)) => WeightedMinHasher[T]) =
+  def apply[T, W](hashFunctions: Int, weights: W)(implicit mk: ((HashFunc[Int], W)) => WeightedMinHasher[T]): IntSketchers[T] =
     Sketchers(hashFunctions, (i: Int) => mk(HashFunc.random(i*1000), weights), MinHash.Estimator(hashFunctions))
 
 
@@ -105,7 +105,7 @@ object WeightedMinHash {
 object WeightedSingleBitMinHash {
   import MinHash.MinHasher
 
-  def apply[T, W](hashFunctions: Int, weights: W)(implicit mk: HashFunc[Int] => MinHasher[T]) =
+  def apply[T, W](hashFunctions: Int, weights: W)(implicit mk: HashFunc[Int] => MinHasher[T]): BitSketchers[T] =
     Sketchers(hashFunctions, (i: Int) => WeightedSingleBitMinHasher(mk(HashFunc.random(i*1000))), mkEstimator(hashFunctions))
 
   case class WeightedSingleBitMinHasher[T](mh: MinHasher[T]) extends BitSketcher[T] {
@@ -137,10 +137,10 @@ object WeightedSingleBitMinHash {
 object RandomHyperplanes {
   import scala.language.reflectiveCalls
 
-  def apply[V](n: Int, vectorLength: Int)(implicit ev: CanDot[V]) =
+  def apply[V](n: Int, vectorLength: Int)(implicit ev: CanDot[V]): BitSketchers[V] =
     Sketchers(n, (i: Int) => mkSketcher(vectorLength, i * 1000), Estimator(n))
 
-  def apply(rowMatrix: DenseMatrix[Double], n: Int): BitSketch[DenseVector[Double]] = ???
+//  def apply(rowMatrix: DenseMatrix[Double], n: Int): BitSketch[DenseVector[Double]] = ???
 //    apply(0 until rowMatrix.rows map { r => rowMatrix(r, ::).t }, n)(CanDotDouble)
 
 
@@ -191,7 +191,7 @@ object RandomHyperplanes {
 
 object RandomProjections {
 
-  def apply[V](projections: Int, bucketSize: Double, vectorLength: Int) =
+  def apply[V](projections: Int, bucketSize: Double, vectorLength: Int): IntSketchers[bVector[Double]] =
     Sketchers(projections, (i: Int) => mkSketcher(vectorLength, i * 1000, bucketSize), Estimator(projections))
 
 
