@@ -192,7 +192,7 @@ object LSH {
   def apply(sk: IntSketching, bands: Int, cfg: LSHBuildCfg): IntLSH =
     apply(sk, bands, pickBits(sk.itemsCount), cfg)
 
-  private def pickBits(len: Int) = 32 - Integer.numberOfLeadingZeros(len)
+  private def pickBits(len: Int) = math.max(32 - Integer.numberOfLeadingZeros(len), 4)
 
   def apply(sk: IntSketching, bands: Int, hashBits: Int): IntLSH =
     apply(sk, bands, hashBits, LSHBuildCfg())
