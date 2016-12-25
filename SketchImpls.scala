@@ -3,21 +3,15 @@ package atrox.sketch
 import scala.language.postfixOps
 import breeze.linalg.{ SparseVector, DenseVector, DenseMatrix, BitVector, normalize, Vector => bVector, operators }
 import breeze.stats.distributions.Rand
-import java.lang.System.arraycopy
-import java.lang.Long.{ bitCount, rotateLeft }
-import java.util.Arrays
+
 
 
 object MinHash {
 
-  def sketching[Item](sets: Seq[Item], hashFunctions: Int)(implicit mk: HashFunc[Int] => MinHasher[Item]): IntSketching =
-    new IntSketchingOf(sets, hashFunctions, i => mk(HashFunc.random(i * 1000)), Estimator(hashFunctions))
-
-  def apply[Item](sets: Seq[Item], hashFunctions: Int)(implicit mk: HashFunc[Int] => MinHasher[Item]): IntSketch =
-    IntSketch.make(sketching(sets, hashFunctions), componentsAtOnce = hashFunctions)
+  def apply[T](hashFunctions: Int)(implicit mk: HashFunc[Int] => MinHasher[T]) =
+    Sketchers(hashFunctions, (i: Int) => mk(HashFunc.random(i*1000)), Estimator(hashFunctions))
 
 
-  /** applies one function to every element of one set and reduces it to minumum */
   trait MinHasher[-T] extends IntSketcher[T] {
     def apply(t: T): Int
   }
@@ -62,11 +56,8 @@ object MinHash {
 /** based on https://www.sumologic.com/2015/10/22/rapid-similarity-search-with-weighted-min-hash/ */
 object WeightedMinHash {
 
-  def sketching[Item, W](sets: Seq[Item], weights: W, hashFunctions: Int)(implicit mk: ((HashFunc[Int], W)) => WeightedMinHasher[Item]): IntSketching =
-    new IntSketchingOf(sets, hashFunctions, i => mk(HashFunc.random(i * 1000), weights), MinHash.Estimator(hashFunctions))
-
-  def apply[Item, W](sets: Seq[Item], weights: W, hashFunctions: Int)(implicit mk: ((HashFunc[Int], W)) => WeightedMinHasher[Item]): IntSketch =
-    IntSketch.make(sketching(sets, weights, hashFunctions), componentsAtOnce = hashFunctions)
+  def apply[T, W](hashFunctions: Int, weights: W)(implicit mk: ((HashFunc[Int], W)) => WeightedMinHasher[T]) =
+    Sketchers(hashFunctions, (i: Int) => mk(HashFunc.random(i*1000), weights), MinHash.Estimator(hashFunctions))
 
 
   /** applies one function to every element of one set and reduces it to minumum */
@@ -118,11 +109,8 @@ object WeightedMinHash {
 object SingleBitMinHash {
   import MinHash.MinHasher
 
-  def sketching[Item](sets: Seq[Item], n: Int)(implicit mk: HashFunc[Int] => MinHasher[Item]): BitSketching =
-    new BitSketchingOf(sets, n, (i: Int) => SingleBitMinHasher(mk(HashFunc.random(i * 1000))), mkEstimator(n))
-
-  def apply[Item](sets: Seq[Item], n: Int)(implicit mk: HashFunc[Int] => MinHasher[Item]): BitSketch =
-    BitSketch.make(sketching(sets, n), componentsAtOnce = n)
+  def apply[T, W](hashFunctions: Int, weights: W)(implicit mk: HashFunc[Int] => MinHasher[T]) =
+    Sketchers(hashFunctions, (i: Int) => SingleBitMinHasher(mk(HashFunc.random(i*1000))), mkEstimator(hashFunctions))
 
   case class SingleBitMinHasher[T](mh: MinHasher[T]) extends BitSketcher[T] {
     def apply(x: T): Boolean = (mh(x) & 1) != 0
@@ -153,16 +141,11 @@ object SingleBitMinHash {
 object RandomHyperplanes {
   import scala.language.reflectiveCalls
 
-  def sketching[V <: { def size: Int }](items: Seq[V], n: Int)(implicit ev: CanDot[V]): BitSketching =
-    new BitSketchingOf(items, n, i => mkSketcher(items.head.size, (i+1) * 1000), Estimator(n))
+  def apply[V](n: Int, vectorLength: Int)(implicit ev: CanDot[V]) =
+    Sketchers(n, (i: Int) => mkSketcher(vectorLength, i * 1000), Estimator(n))
 
-  def apply[V <: { def size: Int }](items: Seq[V], n: Int)(implicit ev: CanDot[V]): BitSketch = {
-    require(n % 64 == 0, "sketch length muse be divisible by 64 (for now)")
-    BitSketch.make(sketching(items, n), componentsAtOnce = 1)
-  }
-
-  def apply(rowMatrix: DenseMatrix[Double], n: Int): BitSketch =
-    apply(0 until rowMatrix.rows map { r => rowMatrix(r, ::).t }, n)(CanDotDouble)
+  def apply(rowMatrix: DenseMatrix[Double], n: Int): BitSketch[DenseVector[Double]] = ???
+//    apply(0 until rowMatrix.rows map { r => rowMatrix(r, ::).t }, n)(CanDotDouble)
 
 
   trait CanDot[InVec] {
@@ -212,19 +195,17 @@ object RandomHyperplanes {
 
 object RandomProjections {
 
-  def sketching(items: Seq[SparseVector[Double]], projections: Int, bucketSize: Int): IntSketching =
-    new IntSketchingOf(items, projections, i => mkSketcher(items.head.size, i * 1000, bucketSize), Estimator(projections))
-
-  def apply(items: Seq[SparseVector[Double]], projections: Int, bucketSize: Int): IntSketch =
-    IntSketch.make(sketching(items, projections, bucketSize), componentsAtOnce = 1)
+  def apply[V](projections: Int, bucketSize: Double, vectorLength: Int) =
+    Sketchers(projections, (i: Int) => mkSketcher(vectorLength, i * 1000, bucketSize), Estimator(projections))
 
 
-  private def mkSketcher(vectorLength: Int, seed: Int, bucketSize: Int) = new IntSketcher[bVector[Double]] {
-    private val randVec = mkRandomUnitVector(vectorLength, seed)
+  private def mkSketcher(vectorLength: Int, seed: Int, bucketSize: Double) =
+    new IntSketcher[bVector[Double]] {
+      private val randVec = mkRandomUnitVector(vectorLength, seed)
 
-    def apply(item: bVector[Double]): Int =
-      ((randVec dot item) / bucketSize).toInt
-  }
+      def apply(item: bVector[Double]): Int =
+        ((randVec dot item) / bucketSize).toInt
+    }
 
   private def mkRandomUnitVector(length: Int, seed: Int) = {
     val rand = new scala.util.Random(seed)
@@ -275,9 +256,9 @@ final class PStableDistributions(val sketchArray: Array[Double], val sketchLengt
 
 
 object HammingDistance {
-  def apply(arr: Array[Long], bits: Int): BitSketch = {
+  def apply[T](bits: Int) = {
     require(bits % 64 == 0)
-    new BitSketch(arr, bits, Estimator(bits))
+    Sketchers(bits, null, Estimator(bits))
   }
 
   case class Estimator(sketchLength: Int) extends BitEstimator {
@@ -294,6 +275,18 @@ object HammingDistance {
 
 object SimHash {
 
+
+  def apply[T](f: HashFuncLong[T]) =
+    new BitSketchers[Array[T]] {
+      val sketchLength = 64
+      val estimator = HammingDistance.Estimator(64)
+      def getSketchFragment(item: Array[T], from: Int, to: Int): Array[Long] = {
+        require(from == 0 && to == 64)
+        Array[Long](mkSimHash64(item, f))
+      }
+    }
+
+
   val md5 = new HashFuncLong[String] {
     def apply(x: String): Long = {
       val m = java.security.MessageDigest.getInstance("MD5")
@@ -301,18 +294,6 @@ object SimHash {
       java.nio.ByteBuffer.wrap(bytes).getLong
     }
   }
-
-
-  def apply[T](xs: IndexedSeq[Array[T]], f: HashFuncLong[T]): BitSketch = {
-    val sketchArray = new Array[Long](xs.length)
-
-    for (i <- 0 until xs.size) {
-      sketchArray(i) = mkSimHash64(xs(i), f)
-    }
-
-    HammingDistance(sketchArray, 64)
-  }
-
 
   def mkSimHash64[T](xs: Array[T], f: HashFuncLong[T]): Long = {
 

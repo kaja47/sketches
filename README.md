@@ -13,7 +13,7 @@ import atrox.sketch._
 val sets: Seq[Set[Int]] = loadMyData()
 
 val (bands, hashes) = LSH.pickHashesAndBands(threshold = 0.5, maxHashes = 64)
-val minhash = MinHash(sets, hashes)
+val minhash = Sketch(sets, MinHash[Set[Int]](hashes))
 val lsh     = LSH(minhash, bands)
 
 val cfg = LSHCfg(maxResults = 50)

@@ -4,20 +4,14 @@ import java.lang.System.arraycopy
 import java.lang.Long.{ bitCount, rotateLeft }
 import java.util.Arrays
 
-// {Bit/Int}Sketching - a class that can produce sketches, contains Estimator
-// {Bit/Int}Sketch - a container of sketches, extends Sketching, contains Estimator
-// {Bit/Int}Estimator - a class that can compute similarity estimates from provided sketch arrays
+
+// Sketcher: one locality sensitive hash function
+// Sketchers: collection of locality sensitive hash functions
+// Sketching: bundle of Sketchers and items to be sensitively hashed
+// Sketch: materialized table of skketch arrays
 
 
-trait Sketching[SketchArray] {
-  def writeSketchFragment(itemIdx: Int, from: Int, to: Int, dest: SketchArray, destBitOffset: Int): Unit
-  def writeSketchFragment(itemIdx: Int, dest: SketchArray, destBitOffset: Int): Unit
-  def getSketchFragment(item: Int, from: Int, to: Int): SketchArray
-  def getSketchFragment(item: Int): SketchArray
-}
-
-
-case class SketchCfg (
+case class SketchCfg(
   maxResults: Int = Int.MaxValue,
   orderByEstimate: Boolean = false,
   compact: Boolean = true,
@@ -25,13 +19,139 @@ case class SketchCfg (
 )
 
 
+
+trait IntSketcher[-T] {
+  /** reduces one item to one component of sketch */
+  def apply(item: T): Int
+}
+
+trait BitSketcher[-T] {
+  /** reduces one item to one component of sketch */
+  def apply(item: T): Boolean
+}
+
+
+trait Sketchers[T, SketchArray] { self =>
+  def sketchLength: Int
+  def estimator: Estimator[SketchArray]
+
+  /** @param itemIdx index of source item
+    * @param from index of first sketch component (inclusive)
+    * @param to index of last sketch component (exclusive)
+    */
+  def getSketchFragment(item: T, from: Int, to: Int): SketchArray
+  def getSketchFragment(item: T): SketchArray =
+    getSketchFragment(item, 0, sketchLength)
+
+  def slice(_from: Int, _to: Int): Sketchers[T, SketchArray] = new Sketchers[T, SketchArray] {
+    val sketchLength = _to - _from
+    val estimator = self.estimator
+    def getSketchFragment(item: T, from: Int, to: Int): SketchArray =
+      self.getSketchFragment(item, _from + from, _from + to)
+  }
+}
+
+object Sketchers {
+  def apply[T](sketchers: Array[IntSketcher[T]], estimator: IntEstimator) = IntSketchersOf(sketchers, estimator)
+  def apply[T](n: Int, mk: Int => IntSketcher[T], estimator: IntEstimator) = IntSketchersOf(Array.tabulate(n)(mk), estimator)
+
+  def apply[T](sketchers: Array[BitSketcher[T]], estimator: BitEstimator) = BitSketchersOf(sketchers, estimator)
+  def apply[T](n: Int, mk: Int => BitSketcher[T], estimator: BitEstimator) = BitSketchersOf(Array.tabulate(n)(mk), estimator)
+}
+
+trait IntSketchers[T] extends Sketchers[T, Array[Int]]
+trait BitSketchers[T] extends Sketchers[T, Array[Long]]
+
+case class IntSketchersOf[T](
+  sketchers: Array[IntSketcher[T]],
+  estimator: IntEstimator
+) extends IntSketchers[T] {
+
+  val sketchLength = sketchers.length
+
+  def getSketchFragment(item: T, from: Int, to: Int): Array[Int] = {
+    val res = new Array[Int](to-from)
+    var i = 0
+    var j = from
+
+    while (j < to) {
+      res(i) = sketchers(j)(item)
+      i += 1
+      j += 1
+    }
+    res
+  }
+}
+
+case class BitSketchersOf[T](
+  sketchers: Array[BitSketcher[T]],
+  estimator: BitEstimator
+) extends BitSketchers[T] {
+
+  val sketchLength = sketchers.length
+
+  def getSketchFragment(item: T, from: Int, to: Int): Array[Long] = {
+    val res = new Array[Long]((to-from+63)/64)
+    var i = 0
+    var j = from
+
+    while (j < to) {
+      val s = sketchers(j)(item)
+      val bit = if (s) 1L else 0L
+      res(i / 64) |= (bit << (i % 64))
+      i += 1
+      j += 1
+    }
+
+    res
+  }
+
+}
+
+
+object Sketching {
+  def apply[T](items: IndexedSeq[T], sk: IntSketchers[T]) = IntSketchingOf(items, sk)
+  def apply[T](items: IndexedSeq[T], sk: BitSketchers[T]) = BitSketchingOf(items, sk)
+}
+
+trait Sketching[SketchArray] { self =>
+  def itemsCount: Int
+  def sketchLength: Int
+  def estimator: Estimator[SketchArray]
+
+  def getSketchFragment(itemIdx: Int, from: Int, to: Int): SketchArray
+  def getSketchFragment(itemIdx: Int): SketchArray =
+    getSketchFragment(itemIdx, 0, sketchLength)
+
+  def slice(_from: Int, _to: Int): Sketching[SketchArray] = new Sketching[SketchArray] {
+    val itemsCount = self.itemsCount
+    val sketchLength = _to - _from
+    val estimator = self.estimator
+    def getSketchFragment(itemIdx: Int, from: Int, to: Int): SketchArray =
+      self.getSketchFragment(itemIdx, _from + from, _from + to)
+  }
+}
+
+
+trait IntSketching extends Sketching[Array[Int]] {
+}
+trait BitSketching extends Sketching[Array[Long]] {
+}
+
+
+object Sketch {
+  def apply[T](items: IndexedSeq[T], sk: IntSketchers[T]) = IntSketch(items, sk)
+  def apply[T](items: IndexedSeq[T], sk: BitSketchers[T]) = BitSketch(items, sk)
+  def apply(items: Array[Long], sk: BitSketchers[Nothing]) = BitSketch[Nothing](items, sk)
+}
+
 trait Sketch[SketchArray] extends Serializable {
 
   type Idxs = Array[Int]
   type SimFun = (Int, Int) => Double
 
   def sketchArray: SketchArray
-  def length: Int
+  def itemsCount: Int
 
   def withConfig(cfg: SketchCfg): Sketch[SketchArray]
 
@@ -46,7 +166,7 @@ trait Sketch[SketchArray] extends Serializable {
   def similarIndexes(idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs = {
     val minBits = estimator.minSameBits(minEst)
     val res = new collection.mutable.ArrayBuilder.ofInt
-    var i = 0 ; while (i < length) {
+    var i = 0 ; while (i < itemsCount) {
       val bits = sameBits(idx, i)
       if (bits >= minBits && idx != i && (f == null || f(i, idx) >= minSim)) {
         res += i
@@ -60,7 +180,7 @@ trait Sketch[SketchArray] extends Serializable {
   def similarItems(idx: Int, minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] = {
     val minBits = estimator.minSameBits(minEst)
     val res = new collection.mutable.ArrayBuffer[Sim]
-    var i = 0 ; while (i < length) {
+    var i = 0 ; while (i < itemsCount) {
       val bits = sameBits(idx, i)
       var sim: Double = 0.0
       if (bits >= minBits && idx != i && (f == null || { sim = f(i, idx) ; sim >= minSim })) {
@@ -80,18 +200,18 @@ trait Sketch[SketchArray] extends Serializable {
       // indexes
       case (false, false) =>
         val stripeSize = 64
-        val res = Array.fill(length)(newIndexResultBuilder)
+        val res = Array.fill(itemsCount)(newIndexResultBuilder)
 
-        Iterator.range(0, length, step = stripeSize) flatMap { start =>
+        Iterator.range(0, itemsCount, step = stripeSize) flatMap { start =>
 
-          stripeRun(stripeSize, start, length, minBits, minSim, f, true, new Op {
+          stripeRun(stripeSize, start, itemsCount, minBits, minSim, f, true, new Op {
             def apply(i: Int, j: Int, est: Double, sim: Double): Unit = {
               res(i) += (j, sim)
               res(j) += (i, sim)
             }
           })
 
-          val endi = math.min(start + stripeSize, length)
+          val endi = math.min(start + stripeSize, itemsCount)
           Iterator.range(start, endi) map { i =>
             val arr = res(i).result
             res(i) = null
@@ -101,17 +221,17 @@ trait Sketch[SketchArray] extends Serializable {
 
       // this needs no additional memory but it have to do full n**2 iterations
       case (_, _) =>
-        //Iterator.tabulate(length) { idx => (idx, similarIndexes(idx, minEst, minSim, f)) }
+        //Iterator.tabulate(itemsCount) { idx => (idx, similarIndexes(idx, minEst, minSim, f)) }
 
         val stripeSize = 64
         val stripesInParallel = if (cfg.parallel) 16 else 1
         println(s"copmact, stripesInParallel $stripesInParallel")
 
-        Iterator.range(0, length, step = stripeSize * stripesInParallel) flatMap { pti =>
+        Iterator.range(0, itemsCount, step = stripeSize * stripesInParallel) flatMap { pti =>
           val res = Array.fill(stripeSize * stripesInParallel)(newIndexResultBuilder)
 
-          parStripes(stripesInParallel, stripeSize, pti, length) { start =>
-            stripeRun(stripeSize, start, length, minBits, minSim, f, false, new Op {
+          parStripes(stripesInParallel, stripeSize, pti, itemsCount) { start =>
+            stripeRun(stripeSize, start, itemsCount, minBits, minSim, f, false, new Op {
               def apply(i: Int, j: Int, est: Double, sim: Double): Unit = {
                 res(i-pti) += (j, sim)
               }
@@ -192,9 +312,6 @@ trait Estimator[SketchArray] {
 }
 
 
-// === IntSketching ============================================================
-
-
 trait IntEstimator extends Estimator[Array[Int]] {
   def sketchLength: Int
 
@@ -218,141 +335,6 @@ trait IntEstimator extends Estimator[Array[Int]] {
   def estimateSimilarity(arrA: Array[Int], idxA: Int, arrB: Array[Int], idxB: Int): Double =
     estimateSimilarity(sameBits(arrA, idxA, arrB, idxB))
 }
-
-
-trait IntSketching extends Sketching[Array[Int]] { self =>
-
-  def sketchLength: Int
-  def length: Int
-  def estimator: IntEstimator
-
-  /** @param itemIdx index of source item
-    * @param from index of first sketch component (inclusive)
-    * @param to index of last sketch component (exclusive)
-    * @param dest sketch array where sketch data must be written
-    * @param destOffset index in sketch array that is ready to be filled with sketch data
-    */
-  def writeSketchFragment(itemIdx: Int, from: Int, to: Int, dest: Array[Int], destOffset: Int): Unit
-
-  def writeSketchFragment(itemIdx: Int, dest: Array[Int], destOffset: Int): Unit =
-    writeSketchFragment(itemIdx, 0, sketchLength, dest, destOffset)
-
-  def getSketchFragment(item: Int, from: Int, to: Int): Array[Int] = {
-    val res = new Array[Int](to-from)
-    writeSketchFragment(item, from, to, res, 0)
-    res
-  }
-
-  def getSketchFragment(item: Int): Array[Int] =
-    getSketchFragment(item, 0, sketchLength)
-
-  def slice(_from: Int, _to: Int): IntSketching = new IntSketching {
-    val sketchLength = _to - _from
-    val length = self.length
-    val estimator = self.estimator
-    def writeSketchFragment(itemIdx: Int, from: Int, to: Int, dest: Array[Int], destOffset: Int): Unit =
-      self.writeSketchFragment(itemIdx, _from + from, _from + to, dest, destOffset)
-  }
-
-}
-
-
-case class IntSketchingOf[T](
-  items: Seq[T],
-  _sketchers: Array[() => IntSketcher[T]],
-  estimator: IntEstimator
-) extends IntSketching {
-
-  def this(items: Seq[T], n: Int, mkSketcher: Int => IntSketcher[T], estimator: IntEstimator) =
-    this(items, Array.tabulate(n) { i => () => mkSketcher(i) }, estimator)
-
-  lazy val sketchers: Array[IntSketcher[T]] = _sketchers map { _.apply }
-
-  val sketchLength = _sketchers.length
-  val length = items.length
-
-  def writeSketchFragment(itemIdx: Int, from: Int, to: Int, dest: Array[Int], destOffset: Int): Unit = {
-    var i = destOffset
-    var j = from
-
-    while (j < to) {
-      dest(i) = sketchers(j)(items(itemIdx))
-      i += 1
-      j += 1
-    }
-  }
-
-  override def slice(_from: Int, _to: Int) = copy(_sketchers = _sketchers.slice(_from, _to))
-
-}
-
-
-
-trait IntSketcher[-T] {
-  /** reduces one item to one component of sketch */
-  def apply(item: T): Int
-}
-
-
-
-object IntSketch {
-  def makeSketchArray(sk: IntSketching, n: Int): Array[Int] = {
-    val sketchArray = new Array[Int](sk.length * sk.sketchLength)
-    for (component <- 0 until sk.sketchLength by n) {
-      val slice = sk.slice(component, component+n)
-      for (itemIdx <- 0 until sk.length) {
-        slice.writeSketchFragment(itemIdx, 0, n, sketchArray, itemIdx * sk.sketchLength + component)
-      }
-    }
-    sketchArray
-  }
-
-  def make[T](sk: IntSketching, componentsAtOnce: Int = 0): IntSketch = {
-    val n = if (componentsAtOnce <= 0) sk.sketchLength else componentsAtOnce
-    IntSketch(makeSketchArray(sk, n), sk.sketchLength, sk.estimator)
-  }
-
-}
-
-
-case class IntSketch(
-  sketchArray: Array[Int],
-  sketchLength: Int,
-  estimator: IntEstimator,
-  cfg: SketchCfg = SketchCfg()
-) extends Sketch[Array[Int]] with IntSketching {
-
-  val length = sketchArray.length / sketchLength
-
-  def withConfig(_cfg: SketchCfg): IntSketch = copy(cfg = _cfg)
-
-  def sameBits(idxA: Int, idxB: Int): Int =
-    estimator.sameBits(sketchArray, idxA, sketchArray, idxB)
-
-  def empty = copy(sketchArray = null)
-
-  def writeSketchFragment(itemIdx: Int, from: Int, to: Int, dest: Array[Int], destOffset: Int): Unit = {
-    var i = destOffset
-    var j = from
-
-    while (j < to) {
-      dest(i) = sketchArray(itemIdx * sketchLength + j)
-      i += 1
-      j += 1
-    }
-  }
-
-  def sketeches: Iterator[Array[Int]] =
-    (0 until (sketchArray.length/sketchLength)).iterator map { i =>
-      Arrays.copyOfRange(sketchArray, i*sketchLength, (i+1)*sketchLength)
-    }
-
-}
-
-
-
-// === BitSketching ============================================================
-
 
 trait BitEstimator extends Estimator[Array[Long]] {
   def sketchLength: Int
@@ -405,136 +387,139 @@ trait BitEstimator256 extends BitEstimator {
 }
 
 
-trait BitSketching extends Sketching[Array[Long]] { self =>
-
-  def sketchLength: Int
-  def length: Int
-  def estimator: BitEstimator
-
-  /** @param itemIdx index of source item
-    * @param from index of the first sketch component (inclusive)
-    * @param to index of the last sketch component (exclusive)
-    * @param dest sketch array where sketch data must be written
-    * @param destBitOffset bit index in sketch array that is ready to be filled with sketch data
-    */
-  def writeSketchFragment(itemIdx: Int, from: Int, to: Int, dest: Array[Long], destBitOffset: Int): Unit
-
-  def writeSketchFragment(itemIdx: Int, dest: Array[Long], destBitOffset: Int): Unit =
-    writeSketchFragment(itemIdx, 0, sketchLength, dest, destBitOffset)
-
-  def getSketchFragment(item: Int, from: Int, to: Int): Array[Long] = {
-    val res = new Array[Long]((to-from)/64)
-    writeSketchFragment(item, from, to, res, 0)
-    res
-  }
-
-  def getSketchFragment(item: Int): Array[Long] =
-    getSketchFragment(item, 0, sketchLength)
-
-  def getSketchFragmentAsLong(item: Int, from: Int, to: Int): Long = {
-    val res = new Array[Long](1) // this allocation should end up stack allocated
-    writeSketchFragment(item, from, to, res, 0)
-    res(0)
-  }
 
 
-  def slice(_from: Int, _to: Int): BitSketching = new BitSketching {
-    val sketchLength = _to - _from
-    val length = self.length
-    val estimator = self.estimator
-    def writeSketchFragment(itemIdx: Int, from: Int, to: Int, dest: Array[Long], destBitOffset: Int): Unit =
-      self.writeSketchFragment(itemIdx, _from + from, _from + to, dest, destBitOffset)
-  }
+case class IntSketchingOf[T](
+  items: IndexedSeq[T],
+  sketchers: Sketchers[T, Array[Int]]
+) extends IntSketching {
 
+  val sketchLength = sketchers.sketchLength
+  val itemsCount = items.length
+  val estimator = sketchers.estimator
+
+  def getSketchFragment(itemIdx: Int, from: Int, to: Int): Array[Int] =
+    sketchers.getSketchFragment(items(itemIdx), from, to)
+
+  override def slice(_from: Int, _to: Int) = copy(sketchers = sketchers.slice(_from, _to))
 }
 
 
-case class BitSketchingOf[T](
-  items: Seq[T],
-  _sketchers: Array[() => BitSketcher[T]],
-  estimator: BitEstimator
-) extends BitSketching {
-
-  def this(items: Seq[T], n: Int, mkSketcher: Int => BitSketcher[T], estimator: BitEstimator) =
-    this(items, Array.tabulate(n) { i => () => mkSketcher(i) }, estimator)
-
-  lazy val sketchers: Array[BitSketcher[T]] = _sketchers map { _.apply }
-
-  val sketchLength = _sketchers.length
-  val length = items.length
-
-  def writeSketchFragment(itemIdx: Int, from: Int, to: Int, dest: Array[Long], destBitOffset: Int): Unit = {
-    var i = destBitOffset
-    var j = from
-
-    while (j < to) {
-      val s = sketchers(j)(items(itemIdx))
-      if (s) {
-        dest(i / 64) |= (1L << (i % 64))
-      }
-      i += 1
-      j += 1
-    }
-  }
-
-  override def slice(_from: Int, _to: Int) = copy(_sketchers = _sketchers.slice(_from, _to))
-
-}
-
-
-trait BitSketcher[-T] {
-  /** reduces one item to one component of sketch */
-  def apply(item: T): Boolean
-}
-
-
-object BitSketch {
-  def makeSketchArray(sk: BitSketching, n: Int): Array[Long] = {
-    val sketchArray = new Array[Long](sk.length * sk.sketchLength / 64)
-    for (component <- 0 until sk.sketchLength by n) {
-      val slice = sk.slice(component, component+n)
-      for (itemIdx <- 0 until sk.length) {
-        slice.writeSketchFragment(itemIdx, 0, n, sketchArray, itemIdx * sk.sketchLength + component)
-      }
+object IntSketch {
+  def makeSketchArray[T](sk: IntSketchers[T], items: IndexedSeq[T]): Array[Int] = {
+    val sketchArray = new Array[Int](items.length * sk.sketchLength)
+    for (itemIdx <- 0 until items.length) {
+      val arr = sk.getSketchFragment(items(itemIdx))
+      System.arraycopy(arr, 0, sketchArray, itemIdx * sk.sketchLength, sk.sketchLength)
     }
     sketchArray
   }
 
-  def make[T](sk: BitSketching, componentsAtOnce: Int): BitSketch = {
-    val n = if (componentsAtOnce <= 0) sk.sketchLength else componentsAtOnce
-    BitSketch(makeSketchArray(sk, n), sk.sketchLength, sk.estimator)
-  }
-
+  def apply[T](items: IndexedSeq[T], sk: IntSketchers[T]): IntSketch[T] =
+    IntSketch(makeSketchArray(sk, items), sk)
 }
 
 
-case class BitSketch(
-  sketchArray: Array[Long],
-  sketchLength: Int,
-  estimator: BitEstimator,
+case class IntSketch[T](
+  sketchArray: Array[Int],
+  sketchers: Sketchers[T, Array[Int]],
   cfg: SketchCfg = SketchCfg()
-) extends Sketch[Array[Long]] with BitSketching {
+) extends Sketch[Array[Int]] with IntSketching {
 
-  def length = sketchArray.length * 64 / sketchLength
-  def bitsPerSketch = sketchLength
+  val sketchLength = sketchers.sketchLength
+  val itemsCount = sketchArray.length / sketchLength
+  val estimator = sketchers.estimator
 
-  def withConfig(_cfg: SketchCfg): BitSketch = copy(cfg = _cfg)
+  def withConfig(_cfg: SketchCfg): IntSketch[T] = copy(cfg = _cfg)
 
   def sameBits(idxA: Int, idxB: Int): Int =
     estimator.sameBits(sketchArray, idxA, sketchArray, idxB)
 
   def empty = copy(sketchArray = null)
 
-  def writeSketchFragment(itemIdx: Int, from: Int, to: Int, dest: Array[Long], destBitOffset: Int): Unit = {
-    var i = destBitOffset
+  def getSketchFragment(itemIdx: Int, from: Int, to: Int): Array[Int] =
+    Arrays.copyOfRange(sketchArray, itemIdx * sketchLength + from, itemIdx * sketchLength + to)
+
+  def sketeches: Iterator[Array[Int]] =
+    Iterator.tabulate(itemsCount) { i => getSketchFragment(i) }
+
+}
+
+
+
+// === BitSketching ============================================================
+
+
+
+
+
+
+case class BitSketchingOf[T](
+  items: IndexedSeq[T],
+  sketchers: Sketchers[T, Array[Long]]
+) extends BitSketching {
+
+  val sketchLength = sketchers.sketchLength
+  val itemsCount = items.length
+  val estimator = sketchers.estimator
+
+  def getSketchFragment(itemIdx: Int, from: Int, to: Int): Array[Long] =
+    sketchers.getSketchFragment(items(itemIdx), from, to)
+
+  override def slice(_from: Int, _to: Int) = copy(sketchers = sketchers.slice(_from, _to))
+
+}
+
+
+
+
+object BitSketch {
+  def makeSketchArray[T](sk: BitSketchers[T], items: IndexedSeq[T]): Array[Long] = {
+    val sketchArray = new Array[Long](items.length * sk.sketchLength / 64)
+    for (itemIdx <- 0 until items.length) {
+      val arr = sk.getSketchFragment(items(itemIdx))
+      ??? // TODO
+    }
+    sketchArray
+  }
+
+  def apply[T](items: IndexedSeq[T], sk: BitSketchers[T]): BitSketch[T] =
+    BitSketch(makeSketchArray(sk, items), sk)
+
+}
+
+
+case class BitSketch[T](
+  sketchArray: Array[Long],
+  sketchers: Sketchers[T, Array[Long]],
+  cfg: SketchCfg = SketchCfg()
+) extends Sketch[Array[Long]] with BitSketching {
+
+  val sketchLength = sketchers.sketchLength
+  def itemsCount = sketchArray.length * 64 / sketchLength
+  val estimator = sketchers.estimator
+  def bitsPerSketch = sketchLength
+
+  def withConfig(_cfg: SketchCfg): BitSketch[T] = copy(cfg = _cfg)
+
+  def sameBits(idxA: Int, idxB: Int): Int =
+    estimator.sameBits(sketchArray, idxA, sketchArray, idxB)
+
+  def empty = copy(sketchArray = null)
+
+  def getSketchFragment(itemIdx: Int, from: Int, to: Int): Array[Long] = {
+    val res = new Array[Long]((to-from+63)/64)
+    var i = 0
     var j = from
 
     while (j < to) {
       val ii = itemIdx * bitsPerSketch + j
       val bit = (sketchArray(ii / 64) >>> (ii % 64)) & 1L
-      dest(i / 64) |= bit << (i % 64)
+      res(i / 64) |= (bit << (i % 64))
       i += 1
       j += 1
     }
+
+    res
   }
 }

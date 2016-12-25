@@ -145,9 +145,9 @@ object LSH {
       def runItems(f: (Int, Int) => Unit) = {
         val base = bs(0)
         val end = bs.last
-        var i = 0 ; while (i < sk.length) {
+        var i = 0 ; while (i < sk.itemsCount) {
           var b = base ; while (b <= end) {
-            val h = skslices(b-base).getSketchFragmentAsLong(i, 0, bandBits).toInt
+            val h = skslices(b-base).getSketchFragment(i, 0, bandBits)(0).toInt
             assert(h <= bandSize)
             f((b - base) * bandSize + h, i)
             b += 1
@@ -161,7 +161,7 @@ object LSH {
         runItems((h, i) => counts(h) += 1)
         Grouping(cfg.bandsInOnePass * bandSize, Int.MaxValue, counts) // Grouping.Counted
       } else {
-        Grouping(cfg.bandsInOnePass * bandSize, cfg.bandsInOnePass * sk.length) // Grouping.Sorted
+        Grouping(cfg.bandsInOnePass * bandSize, cfg.bandsInOnePass * sk.itemsCount) // Grouping.Sorted
       }
 
       runItems((h, i) => bandMap.add(h, i))
@@ -174,9 +174,9 @@ object LSH {
       }
     }
 
-    val revmap = if (cfg.reverseMapping) makeReverseMapping(sk.length, bands, idxs) else null
+    val revmap = if (cfg.reverseMapping) makeReverseMapping(sk.itemsCount, bands, idxs) else null
 
-    new BitLSH(sk, sk.estimator, LSHCfg(), idxs, revmap, sk.length, sk.sketchLength, bands, bandBits)
+    new BitLSH(sk, sk.estimator, LSHCfg(), idxs, revmap, sk.itemsCount, sk.sketchLength, bands, bandBits)
   }
 
 
@@ -187,10 +187,10 @@ object LSH {
   // === IntLSH =================
 
   def apply(sk: IntSketching, bands: Int): IntLSH =
-    apply(sk, bands, pickBits(sk.length), LSHBuildCfg())
+    apply(sk, bands, pickBits(sk.itemsCount), LSHBuildCfg())
 
   def apply(sk: IntSketching, bands: Int, cfg: LSHBuildCfg): IntLSH =
-    apply(sk, bands, pickBits(sk.length), cfg)
+    apply(sk, bands, pickBits(sk.itemsCount), cfg)
 
   private def pickBits(len: Int) = 32 - Integer.numberOfLeadingZeros(len)
 
@@ -215,15 +215,15 @@ object LSH {
       def runItems(f: (Int, Int) => Unit, g: (Int, Array[Int], Int) => Unit = null) = {
         val base = bs(0)
         val end = bs.last
-        var i = 0 ; while (i < sk.length) { // iterate over all items
+        var i = 0 ; while (i < sk.itemsCount) { // iterate over all items
           var b = base ; while (b <= end) { // iterate over bands of an item
-            val h = if (sk.isInstanceOf[IntSketch]) {
+            val h = if (sk.isInstanceOf[IntSketch[_]]) { // TODO remove
               // if sk is IntSketch instance directly access it's internal sketch array, this saves some copying
-              val _sk = sk.asInstanceOf[IntSketch]
+              val _sk = sk.asInstanceOf[IntSketch[_]]
               hashSlice(_sk.sketchArray, _sk.sketchLength, i, b, bandElements, hashBits)
             } else {
-              skslices(b-base).writeSketchFragment(i, scratchpads(b-base), 0)
-              hashSlice(scratchpads(b-base), bandElements, 0, 0, bandElements, hashBits)
+              val arr = skslices(b-base).getSketchFragment(i)
+              hashSlice(arr, bandElements, 0, 0, bandElements, hashBits)
             }
 
             if (f != null) {
@@ -244,7 +244,7 @@ object LSH {
         runItems((h, i) => counts(h) += 1)
         Grouping(cfg.bandsInOnePass * bandSize, Int.MaxValue, counts) // Grouping.Counted
       } else {
-        Grouping(cfg.bandsInOnePass * bandSize, cfg.bandsInOnePass * sk.length) // Grouping.Sorted
+        Grouping(cfg.bandsInOnePass * bandSize, cfg.bandsInOnePass * sk.itemsCount) // Grouping.Sorted
       }
 
       runItems((h, i) => bandMap.add(h, i))
@@ -257,9 +257,9 @@ object LSH {
       }
     }
 
-    val revmap = if (cfg.reverseMapping) makeReverseMapping(sk.length, bands, idxs) else null
+    val revmap = if (cfg.reverseMapping) makeReverseMapping(sk.itemsCount, bands, idxs) else null
 
-    new IntLSH(sk, sk.estimator, LSHCfg(), idxs, revmap, sk.length, sk.sketchLength, bands, bandElements, hashBits)
+    new IntLSH(sk, sk.estimator, LSHCfg(), idxs, revmap, sk.itemsCount, sk.sketchLength, bands, bandElements, hashBits)
   }
 
   def hashSlice(skarr: Array[Int], sketchLength: Int, i: Int, band: Int, bandLength: Int, hashBits: Int) = {
@@ -267,6 +267,14 @@ object LSH {
     val end   = start + bandLength
     _hashSlice(skarr, start, end) & ((1 << hashBits) - 1)
   }
+
+  /*
+  def getSlice(skarr: Array[Int], sketchLength: Int, i: Int, band: Int, bandLength: Int) = {
+    val start = i * sketchLength + band * bandLength
+    val end   = start + bandLength
+    java.util.Arrays.copyOfRange(skarr, start, end)
+  }
+  */
 
 
   /** based on scala.util.hashing.MurmurHash3.arrayHash */
@@ -769,7 +777,7 @@ abstract class LSH { self =>
   * hashBits  - how many bits of a hash is used (2^hashBits should be roughly equal to number of items)
   */
 final case class IntLSH(
-    sketch: IntSketching, estimator: IntEstimator, cfg: LSHCfg,
+    sketch: IntSketching, estimator: Estimator[Array[Int]], cfg: LSHCfg,
     idxs: Array[Array[Int]],        // mapping from a bucket to item idxs that hash into it
     reverseIdxs: Array[Array[Int]], // mapping from a item idx to buckets in which it's located
     itemsCount: Int,
@@ -787,7 +795,7 @@ final case class IntLSH(
     Iterator.tabulate(bands) { b => bandHash(sketchArray, idx, b) }
 
   def bandHash(sketchArray: SketchArray, idx: Int, band: Int): Int =
-    LSH.hashSlice(sketchArray, sketch.sketchLength, idx, band, bandLength, hashBits)
+    LSH.hashSlice(sketchArray, sketchLength, idx, band, bandLength, hashBits)
 
   def rawStreamIndexes: Iterator[Idxs] = idxs.iterator filter (_ != null)
 
@@ -807,7 +815,7 @@ final case class IntLSH(
 
 
 final case class BitLSH(
-    sketch: BitSketching, estimator: BitEstimator, cfg: LSHCfg,
+    sketch: BitSketching, estimator: Estimator[Array[Long]], cfg: LSHCfg,
     idxs: Array[Array[Int]],        // mapping from a bucket to item idxs that hash into it
     reverseIdxs: Array[Array[Int]], // mapping from a item idx to buckets in which it's located
     itemsCount: Int,
