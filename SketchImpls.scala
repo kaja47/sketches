@@ -252,9 +252,17 @@ final class PStableDistributions(val sketchArray: Array[Double], val sketchLengt
 
 
 object HammingDistance {
-  def apply[T](bits: Int) = {
+  def apply(arr: Array[Long], bits: Int): BitSketch[Nothing] = {
     require(bits % 64 == 0)
-    Sketchers(bits, null, Estimator(bits))
+
+    BitSketch[Nothing](
+      arr,
+      new BitSketchers[Nothing] { self =>
+        val sketchLength = bits
+        val estimator = Estimator(bits)
+        def getSketchFragment(item: Nothing, from: Int, to: Int) = sys.error("this should not happen")
+      }
+    )
   }
 
   case class Estimator(sketchLength: Int) extends BitEstimator {
