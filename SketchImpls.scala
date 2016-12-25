@@ -106,13 +106,13 @@ object WeightedMinHash {
   * As of right now it's not really suitable for LSH, because most elements
   * are hashed into few buckets. Investigation pending.
   * https://www.endgame.com/blog/minhash-vs-bitwise-set-hashing-jaccard-similarity-showdown */
-object SingleBitMinHash {
+object WeightedSingleBitMinHash {
   import MinHash.MinHasher
 
   def apply[T, W](hashFunctions: Int, weights: W)(implicit mk: HashFunc[Int] => MinHasher[T]) =
-    Sketchers(hashFunctions, (i: Int) => SingleBitMinHasher(mk(HashFunc.random(i*1000))), mkEstimator(hashFunctions))
+    Sketchers(hashFunctions, (i: Int) => WeightedSingleBitMinHasher(mk(HashFunc.random(i*1000))), mkEstimator(hashFunctions))
 
-  case class SingleBitMinHasher[T](mh: MinHasher[T]) extends BitSketcher[T] {
+  case class WeightedSingleBitMinHasher[T](mh: MinHasher[T]) extends BitSketcher[T] {
     def apply(x: T): Boolean = (mh(x) & 1) != 0
   }
 
