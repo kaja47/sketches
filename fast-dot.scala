@@ -430,17 +430,22 @@ object Bits {
 
   def getBits(arr: Array[Long], from: Int, to: Int): Array[Long] = {
     val res = new Array[Long]((to-from+63)/64)
-    var i = 0
-    var j = from
+    copyBits(arr, from, to, res, 0)
+    res
+  }
 
-    while (j < to) {
-      val bit = (arr(j / 64) >>> (j % 64)) & 1L
-      res(i / 64) |= (bit << (i % 64))
+  def copyBits(arr: Array[Long], from: Int, to: Int, dest: Array[Long], destpos: Int): dest.type = {
+    var i = from
+    var j = destpos
+
+    while (i < to) {
+      val bit = (arr(i / 64) >>> (i % 64)) & 1L
+      dest(j / 64) |= (bit << (j % 64))
       i += 1
       j += 1
     }
 
-    res
+    dest
   }
 
   /** Extract up to 64 bits from a long array. The array is split into number of

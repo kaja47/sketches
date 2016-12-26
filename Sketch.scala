@@ -10,6 +10,9 @@ import atrox.Bits
 // Sketchers: collection of locality sensitive hash functions
 // Sketching: bundle of Sketchers and items to be sensitively hashed
 // Sketch: materialized table of skketch arrays
+//
+// Data in a BitSketch must be 8 byte aligned. SketchLength may not be multiply
+// of 64, but every sketch must start in new long field.
 
 
 case class SketchCfg(
@@ -342,7 +345,7 @@ trait BitEstimator extends Estimator[Array[Long]] {
   def estimateSimilarity(sameBits: Int): Double
 
   def sameBits(arrA: Array[Long], idxA: Int, arrB: Array[Long], idxB: Int) = {
-    val longsLen = sketchLength / 64
+    val longsLen = (sketchLength+63) / 64 // assumes sketch is Long aligned
     val a = idxA * longsLen
     val b = idxB * longsLen
     var i = 0
@@ -474,10 +477,11 @@ case class BitSketchingOf[T](
 
 object BitSketch {
   def makeSketchArray[T](sk: BitSketchers[T], items: IndexedSeq[T]): Array[Long] = {
-    val sketchArray = new Array[Long](items.length * sk.sketchLength / 64)
+    val longsLen = (sk.sketchLength+63) / 64 // assumes sketch is Long aligned
+    val sketchArray = new Array[Long](items.length * longsLen)
     for (itemIdx <- 0 until items.length) {
       val arr = sk.getSketchFragment(items(itemIdx))
-      Bits.copyBits(arr, 0, sk.sketchLength, sketchArray, itemIdx * sk.sketchLength)
+      System.arraycopy(arr, 0, sketchArray, itemIdx * longsLen, arr.length)
     }
     sketchArray
   }
