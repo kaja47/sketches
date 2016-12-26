@@ -70,7 +70,8 @@ object WeightedMinHash {
       var j = 0 ; while (j < set.length) {
         var h = set(j)
         var i = 0 ; while (i < weights(j)) {
-          min = math.min(min, f(h))
+          h = f(h)
+          min = math.min(min, h)
           i += 1
         }
         j += 1
@@ -86,7 +87,8 @@ object WeightedMinHash {
       for (el <- set) {
         var h = el.hashCode
         for (_ <- 0 until weights(el)) {
-          min = math.min(min, f(h))
+          h = f(h)
+          min = math.min(min, h)
         }
       }
       min
