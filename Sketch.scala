@@ -479,7 +479,7 @@ object BitSketch {
     val sketchArray = new Array[Long](items.length * sk.sketchLength / 64)
     for (itemIdx <- 0 until items.length) {
       val arr = sk.getSketchFragment(items(itemIdx))
-      ??? // TODO
+      Bits.copyBits(arr, 0, sk.sketchLength, sketchArray, itemIdx * sk.sketchLength)
     }
     sketchArray
   }
