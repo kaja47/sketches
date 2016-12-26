@@ -174,3 +174,116 @@ class BloomFilter[@scala.specialized(Int, Long) T](
   }
 
 }
+
+
+class CountingBloomFilter[@scala.specialized(Int, Long) T](
+    val hashFunctions: Int, val counters: Int, val counterBits: Int
+  ) extends (T => Boolean) with Bloomy[T] {
+
+  require(hashFunctions > 0, "number of hash functions must be greater than zero")
+  require(counters >= 64, "length of a bloom filter must be at least 64 bits")
+  require((counters & (counters - 1)) == 0, "length of a bloom filter must be power of 2")
+  require(counterBits > 0 && counterBits <= 64, "number of counter bits must be greater than 0 and smaller than 64")
+
+  private[this] val arr = new Array[Long](counters * counterBits / 64 + 1) // +1 for easier extraction of bits
+  private[this] val mask = counters - 1
+
+  protected def elemHashCode(x: T) = x.hashCode
+
+  protected def hash(i: Int, x: T): Int =
+    fs(i)(elemHashCode(x))
+
+  protected val fs =
+    Array.tabulate[HashFunc[Int]](hashFunctions)(i => HashFunc.random(i * 4747))
+
+
+  protected def ripBits(arr: Array[Long], bitpos: Int, bitlen: Int): Long = {
+    val mask = (1 << bitlen) - 1
+    val endpos = (bitpos+bitlen) / 64
+
+    ((arr(bitpos / 64) >>> (bitpos % 64)) & mask) |
+    ((arr(endpos) << (64 - bitpos % 64)) & mask)
+  }
+
+  protected def ramBits(arr: Array[Long], bitpos: Int, bitlen: Int, value: Long): Unit = {
+    val mask = (1 << bitlen) - 1
+    val endpos = (bitpos+bitlen) / 64
+
+    /*
+    arr(bitpos / 64) &= ~(mask << (bitpos % 64))
+    arr(bitpos / 64) |= (value << (bitpos % 64))
+
+    arr(endpos) &= ~(mask >>> (64 - bitpos % 64))
+    arr(endpos) |= (value >>> (64 - bitpos % 64))
+    */
+
+    // TODO code without loops
+    var i = 0 ; while (i < bitlen) {
+      val pos = bitpos + i
+      arr(pos/64) ^= (-((value>>i)&1L) ^ arr(pos/64)) & (1L << (pos%64))
+      i += 1
+    }
+  }
+
+
+  def add(x: T): this.type = {
+    var i = 0
+    while (i < hashFunctions) {
+      val pos = hash(i, x) & mask
+      val bitpos = pos * counterBits
+      val maxCnt = (1 << counterBits) - 1
+
+      val cnt = ripBits(arr, bitpos, counterBits)
+      if (cnt < maxCnt) {
+        ramBits(arr, bitpos, counterBits, cnt+1)
+      }
+
+      i += 1
+    }
+
+    this
+  }
+
+
+  def contains(x: T): Boolean = {
+    var i = 0
+    while (i < hashFunctions) {
+      val pos = hash(i, x) & mask
+      val bitpos = pos * counterBits
+
+      val cnt = ripBits(arr, bitpos, counterBits)
+      if (cnt == 0) return false
+      i += 1
+    }
+    true
+  }
+
+
+  def count(x: T): Long = {
+    var minCnt = Long.MaxValue
+
+    var i = 0
+    while (i < hashFunctions) {
+      val pos = hash(i, x) & mask
+      val bitpos = pos * counterBits
+
+      val cnt = ripBits(arr, bitpos, counterBits)
+      minCnt = math.min(minCnt, cnt)
+
+      i += 1
+    }
+    minCnt
+  }
+
+
+  def falsePositiveRate(n: Int) =
+    pow(1.0 - pow(1.0 - 1.0 / counters, hashFunctions * n), hashFunctions)
+
+  def sizeInBytes = arr.length * 8
+
+  override def toString =
+    s"CountingBloomFilter(hashFunctions = $hashFunctions, counters = $counters, counterBits = $counterBits)"
+
+
+  def bits = arr.map(_.toBinaryString.padTo(64, '_')).mkString(" ")
+}
