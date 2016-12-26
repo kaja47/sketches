@@ -134,10 +134,8 @@ trait Sketching[SketchArray] { self =>
 }
 
 
-trait IntSketching extends Sketching[Array[Int]] {
-}
-trait BitSketching extends Sketching[Array[Long]] {
-}
+trait IntSketching extends Sketching[Array[Int]]
+trait BitSketching extends Sketching[Array[Long]]
 
 
 object Sketch {

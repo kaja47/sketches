@@ -26,10 +26,11 @@ object MinHash {
   def singleBitWeighted[T, El](hashFunctions: Int, weights: El => Int)(implicit mk: ((HashFunc[Int], El => Int)) => WeightedMinHasher[T]): BitSketchers[T] =
     Sketchers(hashFunctions, (i: Int) => SingleBitMinHasher(mk(HashFunc.random(i*1000), weights)), SingleBitEstimator(hashFunctions))
 
+
+
   trait WeightedMinHasher[-T] extends IntSketcher[T] {
     def apply(t: T): Int
   }
-
 
   case class SingleBitMinHasher[T](mh: WeightedMinHasher[T]) extends BitSketcher[T] {
     def apply(x: T): Boolean = (mh(x) & 1) != 0
