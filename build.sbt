@@ -11,6 +11,8 @@ libraryDependencies ++= Seq(
   "org.scalatest" % "scalatest_2.11" % "3.0.1" % "test"
 )
 
+fork := true
+
 javaOptions ++= Seq(
   "-Xmx12G", "-Xms6G"//, "-XX:+UnlockDiagnosticVMOptions", "-XX:+LogCompilation", "-XX:+TraceClassLoading"
 )
