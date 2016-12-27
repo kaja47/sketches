@@ -8,17 +8,14 @@ import atrox.fastSparse
 
 
 final case class MemoryMappedIntLSH(
-    estimator: IntEstimator, cfg: LSHCfg,
-    mm: IntBuffer,
-    reverseIdxs: Array[Array[Int]] = null
-  ) extends LSH {
-
-  override def toString = s"MemoryMappedIntLSH(sketchLength = $sketchLength, bands = $bands, bandLength = $bandLength, hashBits = $hashBits, itemsCount = $itemsCount, tableLength = $tableLength)"
+    sketch: IntSketching,
+    estimator: Estimator[Array[Int]],
+    cfg: LSHCfg,
+    mm: IntBuffer
+  ) extends BaseIntLSH {
 
   type SketchArray = Array[Int]
   type Sketching = IntSketching
-
-  val sketch = null
 
   val sketchLength = mm.get(0)
   val bands        = mm.get(1)
@@ -30,8 +27,6 @@ final case class MemoryMappedIntLSH(
   private def headerSize = 6
 
   def withConfig(newCfg: LSHCfg): MemoryMappedIntLSH = copy(cfg = newCfg)
-  def withReverseMapping = copy(reverseIdxs = LSH.makeReverseMapping(itemsCount, bands, idxs, tableLength))
-  def hasReverseMapping = reverseIdxs != null
 
   def bandHashes(sketchArray: SketchArray, idx: Int): Iterator[Int] =
     Iterator.tabulate(bands) { b => bandHash(sketchArray, idx, b) }
@@ -47,9 +42,6 @@ final case class MemoryMappedIntLSH(
       val bucket = b * (1 << hashBits) + h
       idxs(bucket)
     }.filter { idxs => cfg.accept(idxs) }
-
-  override def rawCandidateIndexes(idx: Int): Array[Idxs] =
-    reverseIdxs(idx) map { bucket => idxs(bucket) }
 
 
   private def idxs(idx: Int): Array[Int] = {
@@ -69,28 +61,30 @@ final case class MemoryMappedIntLSH(
 
     res
   }
+
+  override def toString = s"MemoryMappedIntLSH(sketchLength = $sketchLength, bands = $bands, bandLength = $bandLength, hashBits = $hashBits, itemsCount = $itemsCount, tableLength = $tableLength)"
 }
 
 object MemoryMappedIntLSH {
 
-  def mmap(fileName: String, estimator: IntEstimator, cfg: LSHCfg = LSHCfg()): MemoryMappedIntLSH = {
-
+  def mmapTable(fileName: String): IntBuffer = {
     val chan = new RandomAccessFile(fileName, "r")
       .getChannel()
 
     val len = chan.size()
 
-    val mm = chan
+    chan
       .map(FileChannel.MapMode.READ_ONLY, 0, len)
       .asIntBuffer
       .asReadOnlyBuffer
-
-    MemoryMappedIntLSH(estimator, cfg, mm)
   }
+
+  def mmap(fileName: String, estimator: Estimator[Array[Int]], cfg: LSHCfg = LSHCfg()): MemoryMappedIntLSH =
+    MemoryMappedIntLSH(null, estimator, cfg, mmapTable(fileName))
+
 
   def persist(lsh: IntLSH, fileName: String): Unit = {
     // sketchLength | bands | bandLength | hashBits | itemsCount | idxs length | offsets ... + offset behind the last array | arrays
-    def arrLen(arr: Array[Int]) = if (arr == null) 0 else arr.length
 
     val len = (6 + lsh.idxs.length.toLong + 1 + lsh.idxs.map(arrLen).sum) * 4
     if (len > Int.MaxValue) throw new Exception("too long")
@@ -126,5 +120,7 @@ object MemoryMappedIntLSH {
     mmf.force()
 
   }
+
+  private def arrLen(arr: Array[Int]) = if (arr == null) 0 else arr.length
 
 }

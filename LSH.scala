@@ -772,6 +772,16 @@ abstract class LSH { self =>
 
 
 
+/** Contains methods shared by IntLSH and MemoryMappedIntLSH */
+trait BaseIntLSH extends LSH {
+//  def bandHashes(sketchArray: SketchArray, idx: Int): Iterator[Int] =
+//    Iterator.tabulate(bands) { b => bandHash(sketchArray, idx, b) }
+//
+//  def bandHash(sketchArray: SketchArray, idx: Int, band: Int): Int =
+//    LSH.hashSlice(sketchArray, sketchLength, idx, band, bandLength, hashBits)
+}
+
+
 
 /** bandLengh - how many elements in one band
   * hashBits  - how many bits of a hash is used (2^hashBits should be roughly equal to number of items)
@@ -782,7 +792,7 @@ final case class IntLSH(
     reverseIdxs: Array[Array[Int]], // mapping from a item idx to buckets in which it's located
     itemsCount: Int,
     sketchLength: Int, bands: Int, bandLength: Int, hashBits: Int
-  ) extends LSH with Serializable {
+  ) extends BaseIntLSH with Serializable {
 
   type SketchArray = Array[Int]
   type Sketching = IntSketching
@@ -791,11 +801,6 @@ final case class IntLSH(
   def withReverseMapping = copy(reverseIdxs = LSH.makeReverseMapping(itemsCount, bands, idxs))
   def hasReverseMapping = reverseIdxs != null
 
-  def bandHashes(sketchArray: SketchArray, idx: Int): Iterator[Int] =
-    Iterator.tabulate(bands) { b => bandHash(sketchArray, idx, b) }
-
-  def bandHash(sketchArray: SketchArray, idx: Int, band: Int): Int =
-    LSH.hashSlice(sketchArray, sketchLength, idx, band, bandLength, hashBits)
 
   def rawStreamIndexes: Iterator[Idxs] = idxs.iterator filter (_ != null)
 
