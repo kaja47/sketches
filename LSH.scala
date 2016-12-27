@@ -39,9 +39,7 @@ case class LSHBuildCfg(
     * only necessary amount of memory. */
   collectCounts: Boolean = false,
 
-  computeBandsInParallel: Boolean = false,
-
-  reverseMapping: Boolean = false
+  computeBandsInParallel: Boolean = false
 )
 
 case class LSHCfg(
@@ -174,9 +172,7 @@ object LSH {
       }
     }
 
-    val revmap = if (cfg.reverseMapping) makeReverseMapping(sk.itemsCount, bands, idxs) else null
-
-    new BitLSH(sk, sk.estimator, LSHCfg(), idxs, revmap, sk.itemsCount, sk.sketchLength, bands, bandBits)
+    new BitLSH(sk, sk.estimator, LSHCfg(), idxs, sk.itemsCount, sk.sketchLength, bands, bandBits)
   }
 
 
@@ -257,9 +253,7 @@ object LSH {
       }
     }
 
-    val revmap = if (cfg.reverseMapping) makeReverseMapping(sk.itemsCount, bands, idxs) else null
-
-    new IntLSH(sk, sk.estimator, LSHCfg(), idxs, revmap, sk.itemsCount, sk.sketchLength, bands, bandElements, hashBits)
+    new IntLSH(sk, sk.estimator, LSHCfg(), idxs, sk.itemsCount, sk.sketchLength, bands, bandElements, hashBits)
   }
 
   def hashSlice(skarr: Array[Int], sketchLength: Int, i: Int, band: Int, bandLength: Int, hashBits: Int) = {
@@ -349,7 +343,6 @@ abstract class LSH { self =>
   def estimator: Estimator[SketchArray]
   def cfg: LSHCfg
   def bands: Int
-  protected def hasReverseMapping: Boolean
 
   protected def requireSketchArray(): SketchArray = sketch match {
     case sk: atrox.sketch.Sketch[_] => sk.sketchArray.asInstanceOf[SketchArray]
@@ -368,9 +361,6 @@ abstract class LSH { self =>
     pow(1.0 / bands, 1.0 / bandLen)
   }
 
-  def needsReverseMapping = if (!hasReverseMapping) withReverseMapping else this
-  def withReverseMapping: LSH
-
   trait Query[Res] {
     def apply(candidateIdxs: Array[Idxs], idx: Int, minEst: Double, minSim: Double, f: SimFun): Res
 
@@ -387,12 +377,7 @@ abstract class LSH { self =>
 
     def apply(idx: Int, minEst: Double, minSim: Double, f: SimFun): Res = {
       require(idx >= 0 && idx < itemsCount, s"index $idx is out of range (0 until $itemsCount)")
-
-      if (hasReverseMapping) {
-        apply(rawCandidateIndexes(idx), idx, minEst, minSim, f)
-      } else {
-        apply(sketch.getSketchFragment(idx), 0, idx, minEst, minSim, f)
-      }
+      apply(sketch.getSketchFragment(idx), 0, idx, minEst, minSim, f)
     }
     def apply(idx: Int, minEst: Double): Res = apply(idx, minEst, 0.0, null)
     def apply(idx: Int): Res = apply(idx, 0.0, 0.0, null)
@@ -789,7 +774,6 @@ trait BaseIntLSH extends LSH {
 final case class IntLSH(
     sketch: IntSketching, estimator: Estimator[Array[Int]], cfg: LSHCfg,
     idxs: Array[Array[Int]],        // mapping from a bucket to item idxs that hash into it
-    reverseIdxs: Array[Array[Int]], // mapping from a item idx to buckets in which it's located
     itemsCount: Int,
     sketchLength: Int, bands: Int, bandLength: Int, hashBits: Int
   ) extends BaseIntLSH with Serializable {
@@ -798,15 +782,8 @@ final case class IntLSH(
   type Sketching = IntSketching
 
   def withConfig(newCfg: LSHCfg): IntLSH = copy(cfg = newCfg)
-  def withReverseMapping = copy(reverseIdxs = LSH.makeReverseMapping(itemsCount, bands, idxs))
-  def hasReverseMapping = reverseIdxs != null
-
 
   def rawStreamIndexes: Iterator[Idxs] = idxs.iterator filter (_ != null)
-
-
-  override def rawCandidateIndexes(idx: Int): Array[Idxs] =
-    reverseIdxs(idx) map { bucket => idxs(bucket) }
 
   def rawCandidateIndexes(skarr: SketchArray, skidx: Int): Array[Idxs] =
     Array.tabulate(bands) { b =>
@@ -822,7 +799,6 @@ final case class IntLSH(
 final case class BitLSH(
     sketch: BitSketching, estimator: Estimator[Array[Long]], cfg: LSHCfg,
     idxs: Array[Array[Int]],        // mapping from a bucket to item idxs that hash into it
-    reverseIdxs: Array[Array[Int]], // mapping from a item idx to buckets in which it's located
     itemsCount: Int,
     bitsPerSketch: Int, bands: Int, bandBits: Int
   ) extends LSH with Serializable {
@@ -831,17 +807,11 @@ final case class BitLSH(
   type Sketching = BitSketching
 
   def withConfig(newCfg: LSHCfg): BitLSH = copy(cfg = newCfg)
-  def withReverseMapping = copy(reverseIdxs = LSH.makeReverseMapping(itemsCount, bands, idxs))
-  def hasReverseMapping = reverseIdxs != null
 
   def bandHashes(sketchArray: Array[Long], idx: Int): Iterator[Int] =
     Iterator.tabulate(bands) { b => LSH.ripBits(sketchArray, bitsPerSketch, idx, b, bandBits) }
 
   def rawStreamIndexes: Iterator[Idxs] = idxs.iterator filter (_ != null)
-
-
-  override def rawCandidateIndexes(idx: Int): Array[Idxs] =
-    reverseIdxs(idx) map { bucket => idxs(bucket) }
 
   def rawCandidateIndexes(skarr: SketchArray, skidx: Int): Array[Idxs] =
     Array.tabulate(bands) { b =>
