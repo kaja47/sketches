@@ -154,6 +154,8 @@ object RadixSort {
 
     checkPreconditions(arr, scratch, from, to, fromByte, toByte, 4)
 
+    if (from >= to) return (arr, scratch)
+
     var input = arr
     var output = scratch
     val counts = new Array[Int](4 * 256)
@@ -227,6 +229,8 @@ object RadixSort {
   def sort(arr: Array[Long], scratch: Array[Long], from: Int, to: Int, fromByte: Int, toByte: Int, returnResultInSourceArray: Boolean): (Array[Long], Array[Long]) = {
 
     checkPreconditions(arr, scratch, from, to, fromByte, toByte, 8)
+
+    if (from >= to) return (arr, scratch)
 
     var input = arr
     var output = scratch
@@ -302,6 +306,8 @@ object RadixSort {
 
     checkPreconditions(arr, scratch, from, to, fromByte, toByte, 4)
 
+    if (from >= to) return (arr, scratch)
+
     var input = arr
     var output = scratch
     val counts = new Array[Int](4 * 256)
@@ -375,6 +381,8 @@ object RadixSort {
   def sort(arr: Array[Double], scratch: Array[Double], from: Int, to: Int, fromByte: Int, toByte: Int, returnResultInSourceArray: Boolean): (Array[Double], Array[Double]) = {
 
     checkPreconditions(arr, scratch, from, to, fromByte, toByte, 8)
+
+    if (from >= to) return (arr, scratch)
 
     var input = arr
     var output = scratch
