@@ -127,12 +127,12 @@ object LSH {
     }
 
     idxs
-  
+
   }
 
 
   // === BitLSH =================
-  
+
 
   def apply(sk: BitSketching, bands: Int): BitLSH =
     apply(sk, bands, LSHBuildCfg())
@@ -237,21 +237,17 @@ object LSH {
 }
 
 
-/** LSH configuration
-  *
-  * LSH, full Sketch
-  * LSH, empty Sketch
-  *  - can only provide list of candidates, cannot estimate similarities
+/** LSH
   *
   * - Methods with "raw" prefix might return duplicates and are not affected by
   *   maxBucketSize, maxCandidates and maxResults config options.
-  * - Methods without "raw" prefix must never return duplicates and queried item itself
+  * - Methods without "raw" prefix must never return duplicates and query item itself
   *
   * Those combinations introduce non-determenism:
   * - non compact + max candidates (candidate selection is done by random sampling)
   * - parallel + non compact
   *
-  * idxs must be sorted
+  * every Idxs array must be sorted
   */
 abstract class LSH { self =>
   type SketchArray
