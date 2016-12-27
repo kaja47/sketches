@@ -7,6 +7,7 @@ import scala.util.hashing.MurmurHash3
 import scala.collection.{ mutable, GenSeq }
 import scala.collection.mutable.{ ArrayBuilder, ArrayBuffer }
 import scala.language.postfixOps
+import Sketching.{ BitSketching, IntSketching } // types
 
 
 case class LSHBuildCfg(

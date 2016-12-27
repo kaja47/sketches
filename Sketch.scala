@@ -114,8 +114,8 @@ case class BitSketchersOf[T](
 
 
 object Sketching {
-  def apply[T](items: IndexedSeq[T], sk: IntSketchers[T]) = IntSketchingOf(items, sk)
-  def apply[T](items: IndexedSeq[T], sk: BitSketchers[T]) = BitSketchingOf(items, sk)
+  type IntSketching = Sketching[Array[Int]]
+  type BitSketching = Sketching[Array[Long]]
 }
 
 trait Sketching[SketchArray] { self =>
@@ -136,9 +136,22 @@ trait Sketching[SketchArray] { self =>
   }
 }
 
+case class SketchingOf[T, SketchArray](
+  items: IndexedSeq[T],
+  sketchers: Sketchers[T, SketchArray]
+) extends Sketching[SketchArray] {
 
-trait IntSketching extends Sketching[Array[Int]]
-trait BitSketching extends Sketching[Array[Long]]
+  val sketchLength = sketchers.sketchLength
+  val itemsCount = items.length
+  val estimator = sketchers.estimator
+
+  def getSketchFragment(itemIdx: Int, from: Int, to: Int): SketchArray =
+    sketchers.getSketchFragment(items(itemIdx), from, to)
+
+  override def slice(_from: Int, _to: Int) = copy(sketchers = sketchers.slice(_from, _to))
+
+}
+
 
 
 object Sketch {
@@ -391,20 +404,6 @@ trait BitEstimator256 extends BitEstimator {
 
 
 
-case class IntSketchingOf[T](
-  items: IndexedSeq[T],
-  sketchers: Sketchers[T, Array[Int]]
-) extends IntSketching {
-
-  val sketchLength = sketchers.sketchLength
-  val itemsCount = items.length
-  val estimator = sketchers.estimator
-
-  def getSketchFragment(itemIdx: Int, from: Int, to: Int): Array[Int] =
-    sketchers.getSketchFragment(items(itemIdx), from, to)
-
-  override def slice(_from: Int, _to: Int) = copy(sketchers = sketchers.slice(_from, _to))
-}
 
 
 object IntSketch {
@@ -426,7 +425,7 @@ case class IntSketch[T](
   sketchArray: Array[Int],
   sketchers: Sketchers[T, Array[Int]],
   cfg: SketchCfg = SketchCfg()
-) extends Sketch[Array[Int]] with IntSketching {
+) extends Sketch[Array[Int]] with Sketching[Array[Int]] {
 
   val sketchLength = sketchers.sketchLength
   val itemsCount = sketchArray.length / sketchLength
@@ -447,30 +446,6 @@ case class IntSketch[T](
 
 }
 
-
-
-// === BitSketching ============================================================
-
-
-
-
-
-
-case class BitSketchingOf[T](
-  items: IndexedSeq[T],
-  sketchers: Sketchers[T, Array[Long]]
-) extends BitSketching {
-
-  val sketchLength = sketchers.sketchLength
-  val itemsCount = items.length
-  val estimator = sketchers.estimator
-
-  def getSketchFragment(itemIdx: Int, from: Int, to: Int): Array[Long] =
-    sketchers.getSketchFragment(items(itemIdx), from, to)
-
-  override def slice(_from: Int, _to: Int) = copy(sketchers = sketchers.slice(_from, _to))
-
-}
 
 
 
@@ -496,7 +471,7 @@ case class BitSketch[T](
   sketchArray: Array[Long],
   sketchers: Sketchers[T, Array[Long]],
   cfg: SketchCfg = SketchCfg()
-) extends Sketch[Array[Long]] with BitSketching {
+) extends Sketch[Array[Long]] with Sketching[Array[Long]] {
 
   val sketchLength = sketchers.sketchLength
   val itemsCount = sketchArray.length * 64 / sketchLength
