@@ -376,6 +376,120 @@ object fastSparse {
         buff.result
     }
 
+  def unionBruteForce(sets: Array[Array[Int]]): Array[Int] = {
+
+    def isAllNonEmpty(sets: Array[Array[Int]]): Boolean = {
+      var i = 0 ; while (i < sets.length) {
+        if (sets(i).length == 0) return false;
+        i += 1
+      }
+      true
+    }
+
+    if (sets.length == 0) return new Array[Int](0)
+
+    val _sets: Array[Array[Int]] = if (isAllNonEmpty(sets)) sets else sets.filter(_.length > 0)
+
+
+    val heads = new Array[Int](_sets.length)
+    val positions = new Array[Int](_sets.length)
+
+    var i = 0 ; while (i < _sets.length) {
+      heads(i) = _sets(i)(0)
+      positions(i) += 1
+      i += 1
+    }
+
+    val buff = new collection.mutable.ArrayBuilder.ofInt
+    buff.sizeHint(sets(0).length)
+
+    var min = Long.MaxValue
+    var activeSets = _sets.length
+
+    while (activeSets > 0) {
+
+      var minVal = Int.MaxValue
+      var minIdx = 0
+      i = 0 ; while (i < heads.length) {
+        minIdx = if (heads(i) < minVal) i else minIdx
+        minVal = heads(minIdx)
+        i += 1
+      }
+
+      if (minVal.toLong != min) {
+        buff += minVal
+        min = minVal
+      }
+
+      if (positions(minIdx) < _sets(minIdx).length) {
+        heads(minIdx) = _sets(minIdx)(positions(minIdx))
+        positions(minIdx) += 1
+      } else {
+        heads(minIdx) = Int.MaxValue
+        activeSets -= 1
+      }
+    }
+
+    //println(s"len = ${sets.map(_.length).sum}, rep = $rep, sets = ${sets.length}")
+
+    buff.result
+  }
+
+  def unionOfFrequentItems(sets: Array[Array[Int]], minFreq: Int): Array[Int] = {
+
+    if (minFreq <= 1) return union(sets)
+
+    val (heap, positions) = _initUnion(sets)
+    var min = Long.MinValue
+    var cnt = 0
+    val buff = new collection.mutable.ArrayBuilder.ofInt
+
+    while (heap.nonEmpty) {
+      val key = heap.minKey
+      val i = heap.minValue
+
+      if (key.toLong != min) {
+        min = key
+        cnt = 1
+      } else {
+        cnt += 1
+        if (cnt == minFreq) buff += key
+      }
+
+      _stepUnion(sets, i, heap, positions)
+    }
+
+    buff.result
+  }
+
+  def intersection(sets: Array[Array[Int]]): Array[Int] =
+    unionOfFrequentItems(sets, sets.length)
+
+
+  def unionCursor(sets: Array[Array[Int]]): Cursor[Int] =
+    new Cursor[Int] {
+      private val (heap, positions) = _initUnion(sets)
+      private var min = Long.MinValue
+      private var v = -1
+
+      def moveNext(): Boolean =  {
+        while (heap.nonEmpty && heap.minKey.toLong == min) {
+          _stepUnion(sets, heap.minValue, heap, positions)
+        }
+
+        if (heap.nonEmpty) {
+          val key = heap.minKey
+          v   = key
+          min = key
+          true
+        } else {
+          false
+        }
+      }
+
+      def value = v
+    }
+
 
 
   def mergeSortedArrays(a: Array[Int], b: Array[Int]): Array[Int] =
