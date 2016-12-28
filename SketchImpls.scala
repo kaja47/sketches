@@ -174,6 +174,142 @@ object RandomProjections {
 }
 
 
+/*
+// A Brief Index for Proximity Searching https://www.researchgate.net/publication/220843654_A_Brief_Index_for_Proximity_Searching
+object RandomPermutations {
+
+  type DistFun[T] = (T, T) => Double
+
+  def sketching[T](items: IndexedSeq[T], referencePoints: IndexedSeq[T], dist: DistFun[T]): BitSketching =
+    new BitSketching {
+      val sketchLength: Int = referencePoints.length
+      val length: Int = items.length
+      val estimator: BitEstimator = Estimator(referencePoints.length)
+
+      def writeSketchFragment(itemIdx: Int, from: Int, to: Int, dest: Array[Long], destOffset: Int): Unit = {
+        val p = permutation(referencePoints, items(itemIdx), dist)
+        val arr = encode(p, m = referencePoints.length / 2)
+
+        var i = from
+        var j = destOffset
+        while (i < to) {
+          val bit = (arr(i / 64) >> (i % 64)) & 1
+          dest(j / 64) |= (bit << (j % 64))
+          i += 1
+          j += 1
+        }
+      }
+    }
+
+  def apply[T](items: IndexedSeq[T], referencePoints: IndexedSeq[T], dist: DistFun[T]): BitSketch[T] = {
+    val sk = sketching(items, referencePoints, dist)
+    BitSketch.make(sk)
+  }
+
+  def sketching[T](items: IndexedSeq[T], referencePoints: Int, dist: DistFun[T]): BitSketching =
+    sketching(items, sampleReferencePoints(items, referencePoints), dist)
+
+  def apply[T](items: IndexedSeq[T], referencePoints: Int, dist: DistFun[T]): BitSketch[T] =
+    apply(items, sampleReferencePoints(items, referencePoints), dist)
+
+
+  private def sampleReferencePoints[T](items: IndexedSeq[T], n: Int): IndexedSeq[T] = {
+    // TODO sampling without repetition
+    val rnd = new util.Random(1234)
+    IndexedSeq.fill(n) { items(rnd.nextInt(items.length)) }
+  }
+
+  def permutation[T](referencePoints: IndexedSeq[T], q: T, dist: DistFun[T]): Array[Int] =
+    referencePoints.zipWithIndex.map { case (p, i) => (dist(q, p), i) }.sorted.map(_._2).toArray
+
+  def inv(p: Array[Int]) = {
+    val inv = new Array[Int](p.length)
+    for (i <- 0 until p.length) inv(p(i)) = i
+    inv
+  }
+
+  // m = p.length / 2 is apparebntly a good choice
+  def encode(p: Array[Int], m: Int) = {
+    require(m > 0)
+    val pinv = inv(p)
+    val C = new Array[Long]((p.length+63)/64)
+    for (i <- 0 until p.length) {
+      if (math.abs(i - pinv(i)) > m) {
+        C(i / 64) |= (1 << (i % 64))
+      }
+    }
+    C
+  }
+
+  // Bit-encoding using permutation of the center. Interchangeable with encode.
+  def encodePermCenter(p: Array[Int], m: Int) = {
+    require(m > 0)
+    val pinv = inv(p)
+    val C = new Array[Long]((p.length+63)/64)
+    val M = p.length / 4
+    for (i <- 0 until p.length) {
+      var I = i
+      if ((I / M) % 3 == 0) {
+        I += M
+      }
+      if (math.abs(I - pinv(i)) > m) {
+        C(i / 64) |= (1 << (i % 64))
+      }
+    }
+    C
+  }
+
+
+  case class Estimator(sketchLength: Int) extends BitEstimator {
+    def estimateSimilarity(sameBits: Int): Double = ???
+    def minSameBits(sim: Double): Int = ???
+  }
+
+}
+
+object RandomBisectors {
+
+  type DistFun[T] = (T, T) => Double
+
+  def sketching[T](items: IndexedSeq[T], bisectors: IndexedSeq[(T, T)], dist: DistFun[T]): BitSketching =
+    new BitSketchingOf(items, bisectors.length, i => mkSketcher(bisectors(i), dist), Estimator(bisectors.length))
+
+  def apply[T](items: IndexedSeq[T], bisectors: IndexedSeq[(T, T)], dist: DistFun[T]): BitSketch[T] =
+    BitSketch.make(sketching(items, bisectors, dist))
+
+
+  def sketching[T](items: IndexedSeq[T], bisectors: Int, dist: DistFun[T]): BitSketching =
+    sketching(items, samplePairs(items, bisectors), dist)
+
+  def apply[T](items: IndexedSeq[T], bisectors: Int, dist: DistFun[T]): BitSketch[T] =
+    apply(items, samplePairs(items, bisectors), dist)
+
+
+  private def samplePairs[T](items: IndexedSeq[T], n: Int): IndexedSeq[(T, T)] = {
+    // TODO sampling without repetition
+    val rnd = new util.Random(1234)
+    def pick() = rnd.nextInt(items.length)
+    IndexedSeq.fill(n) { (items(pick()), items(pick())) }
+  }
+
+
+  private def mkSketcher[T](points: (T, T), dist: (T, T) => Double) = new BitSketcher[T] {
+    val (a, b) = points
+    def apply(item: T): Boolean = dist(a, item) < dist(b, item)
+  }
+
+  case class Estimator(sketchLength: Int) extends BitEstimator {
+    def estimateSimilarity(sameBits: Int): Double = sameBits.toDouble / sketchLength
+    def minSameBits(sim: Double): Int = {
+      require(sim >= 0.0 && sim <= 1.0, "similarity must be from (0, 1)")
+      (sim * sketchLength).toInt
+    }
+  }
+
+}
+*/
+
+
 
 /*
 object PStableDistributions {
@@ -204,6 +340,15 @@ final class PStableDistributions(val sketchArray: Array[Double], val sketchLengt
   def minSameBits(sim: Double): Int = ???
   def empty: Sketch = ???
 }
+
+
+
+object SpectralHashing {
+  https://people.csail.mit.edu/torralba/publications/spectralhashing.pdf
+  https://github.com/superhans/SpectralHashing/blob/master/compressSH.m
+  https://github.com/wanji/sh/blob/master/sh.py
+}
+
 */
 
 
