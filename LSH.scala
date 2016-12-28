@@ -68,8 +68,8 @@ case class LSHCfg(
 }
 
 
-case class Sim(a: Int, b: Int, estimatedSimilarity: Double, similarity: Double) {
-  def this(a: Int, b: Int, estimatedSimilatity: Double) = this(a, b, estimatedSimilatity, estimatedSimilatity)
+case class Sim(idx: Int, estimatedSimilarity: Double, similarity: Double) {
+  def this(idx: Int, estimatedSimilatity: Double) = this(idx, estimatedSimilatity, estimatedSimilatity)
 }
 
 
@@ -411,6 +411,7 @@ abstract class LSH { self =>
     }
   }
 
+  /*
   val rawSimilarItemsStream = new BulkQuery[Iterator[Sim]] {
     def apply(minEst: Double, minSim: Double, f: SimFun) = {
       if (minEst == LSH.NoEstimate) {
@@ -453,6 +454,7 @@ abstract class LSH { self =>
       }
     }
   }
+  */
 
 
   /** must never return duplicates */
@@ -645,24 +647,24 @@ abstract class LSH { self =>
 
     if (noEstimates && f != null) {
       while (cur.moveNext()) {
-        res += Sim(idx, cur.key, 0.0, cur.value)
+        res += Sim(cur.key, 0.0, cur.value)
       }
 
     } else if (!noEstimates && f == null) {
       while (cur.moveNext()) {
-        res += Sim(idx, cur.key, cur.value, cur.value)
+        res += Sim(cur.key, cur.value, cur.value)
       }
 
     } else if (!noEstimates && f != null && cfg.orderByEstimate) {
       while (cur.moveNext()) {
-        res += Sim(idx, cur.key, cur.value, f(idx, cur.key))
+        res += Sim(cur.key, cur.value, f(idx, cur.key))
       }
 
     } else if (!noEstimates && f != null) {
       val skarr = requireSketchArray()
       while (cur.moveNext()) {
         val est = estimator.estimateSimilarity(skarr, idx, skarr, cur.key)
-        res += Sim(idx, cur.key, est, cur.value)
+        res += Sim(cur.key, est, cur.value)
       }
     } else {
       sys.error("this should not happen")

@@ -199,7 +199,7 @@ trait Sketch[SketchArray] extends Serializable {
       val bits = sameBits(idx, i)
       var sim: Double = 0.0
       if (bits >= minBits && idx != i && (f == null || { sim = f(i, idx) ; sim >= minSim })) {
-        res += Sim(idx, i, estimator.estimateSimilarity(bits), sim)
+        res += Sim(i, estimator.estimateSimilarity(bits), sim)
       }
       i += 1
     }
@@ -312,7 +312,7 @@ trait Sketch[SketchArray] extends Serializable {
   protected def indexesToSims(idx: Int, simIdxs: Idxs, f: SimFun, sketch: SketchArray) =
     simIdxs.iterator.map { simIdx =>
       val est = estimator.estimateSimilarity(sketch, idx, sketch, simIdx)
-      Sim(idx, simIdx, est, if (f == null) est else f(idx, simIdx))
+      Sim(simIdx, est, if (f == null) est else f(idx, simIdx))
     }
 }
 
