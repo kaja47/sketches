@@ -75,10 +75,6 @@ case class Sim(a: Int, b: Int, estimatedSimilatity: Double, similarity: Double) 
 
 object LSH {
 
-  //type BitLSH = LSHObj
-  //type IntLSH = LSHObj
-
-
   val NoEstimate = Double.NegativeInfinity
 
   def pickBands(threshold: Double, hashes: Int) = {
@@ -99,13 +95,15 @@ object LSH {
     (hashes, bands)
   }
 
-  def buildTables[T](sk: Sketching[T], bands: Int, bandBits: Int, hashBits: Int, cfg: LSHBuildCfg)(hf: (Sketching[T], Int, Int, Int) => Int) = {
-    val bandSize = (1 << hashBits)
+  def buildTables[SkArr](sk: Sketching[SkArr], params: LSHTableParams, cfg: LSHBuildCfg)(hf: (SkArr, Int, Int, LSHTableParams) => Int): LSHTable[SkArr] = {
+    val bandSize = (1 << params.hashBits)
 
     def runItems(f: (Int, Int, Int) => Unit) = { // f args: band, hash, itemIdx
       var itemIdx = 0 ; while (itemIdx < sk.itemsCount) {
-        var band = 0 ; while (band < bands) {
-          val h = hf(sk, itemIdx, band*bandBits, (band+1)*bandBits)
+        val skarr = sk.getSketchFragment(itemIdx)
+        var band = 0 ; while (band < params.bands) {
+          val h = hf(skarr, 0, band, params)
+
           assert(h <= bandSize, s"$h < $bandSize")
           f(band, h, itemIdx)
           band += 1
@@ -114,75 +112,91 @@ object LSH {
       }
     }
 
-    val bandMap = new Grouping.Sorted(bands * bandSize, bands * sk.itemsCount)
+    val bandMap = new Grouping.Sorted(params.bands * bandSize, params.bands * sk.itemsCount)
     runItems { (band, h, i) => bandMap.add(band * bandSize + h, i) }
 
-    val idxs = new Array[Array[Int]](bands * bandSize)
+    val idxsArr = new Array[Array[Int]](params.bands * bandSize)
 
     bandMap.getAll foreach { case (h, is) =>
       require(fastSparse.isDistinctIncreasingArray(is))
       if (is.length <= cfg.maxBucketSize && is.length >= cfg.minBucketSize) {
-        idxs(h) = is
+        idxsArr(h) = is
       }
     }
 
-    idxs
-
+    val _params = params
+    new LSHTable[SkArr] with IntArrayLSHTable[SkArr]  {
+      val params = _params
+      val hashFun  = hf
+      val sliceFun = (sk: SkArr, skidx: Int, band: Int, params: LSHTableParams) => ???
+      val idxs = idxsArr
+    }
   }
 
 
-  // === BitLSH =================
+
+  trait Switch[SketchArray] { def run: (Sketching[SketchArray], Int, Int, LSHBuildCfg) => LSHTable[SketchArray] }
+  implicit object SwitchInt extends Switch[Array[Int]]  { val run = applyInt _ }
+  implicit object SwitchBit extends Switch[Array[Long]] { val run = applyBit _ }
+
+  def apply[SketchArray](sk: Sketching[SketchArray], bands: Int, hashBits: Int = -1, cfg: LSHBuildCfg = LSHBuildCfg())(implicit sw: Switch[SketchArray]) = {
+    val table = sw.run(sk, bands, hashBits, cfg)
+    LSHObj(sk, sk.estimator, LSHCfg(), table)
+  }
 
 
-  def apply(sk: BitSketching, bands: Int): BitLSH =
-    apply(sk, bands, LSHBuildCfg())
-
-  def apply(sk: BitSketching, bands: Int, cfg: LSHBuildCfg): BitLSH = {
+  def applyBit(sk: BitSketching, bands: Int, hashBits: Int, cfg: LSHBuildCfg) = {
     require(sk.sketchLength % 64 == 0, "BitLSH must have multiple of 64 hashes for now")
     require(bands > 0, "number of bands must be non-negative")
 
     val bandBits = sk.sketchLength / bands
     require(bandBits < 32)
+    require(hashBits <= 0 || hashBits == bandBits) // not set or same as band length in bits
 
-    val idxs = buildTables(sk, bands, bandBits, bandBits, cfg) {
-      (sk, itemIdx, start, end) => sk.getSketchFragment(itemIdx, start, end)(0).toInt
+    val params = LSHTableParams(
+      sketchLength = sk.sketchLength,
+      bands        = bands,
+      bandLength   = bandBits,
+      hashBits     = bandBits, // not hashBits
+      itemsCount   = sk.itemsCount
+    )
+
+    buildTables(sk, params, cfg) {
+        LSHTable.Bit._1
+//      (sk, itemIdx, band, params) =>
+//        sk.getSketchFragment(itemIdx, band*params.bandLength, (band+1)*params.bandLength)(0).toInt
     }
+  }
 
-    new BitLSH(sk, sk.estimator, LSHCfg(), idxs, sk.itemsCount, sk.sketchLength, bands, bandBits)
+  def applyInt(sk: IntSketching, bands: Int, hashBits: Int, cfg: LSHBuildCfg) = {
+    val realHashBits = if (hashBits <= 0) pickBits(sk.itemsCount) else hashBits
+    require(realHashBits > 0, "number of hash bits must be non-negative")
+    require(bands > 0, "number of bands must be non-negative")
+
+    val bandBits = sk.sketchLength / bands // how many elements from a sketch is used in one band
+
+    val params = LSHTableParams(
+      sketchLength = sk.sketchLength,
+      bands        = bands,
+      bandLength   = bandBits,
+      hashBits     = realHashBits,
+      itemsCount   = sk.itemsCount
+    )
+
+    buildTables(sk, params, cfg) {
+      LSHTable.Int._1
+//      (sk, itemIdx, band, params) =>
+//        val arr = sk.getSketchFragment(itemIdx, band*params.bandLength, (band+1)*params.bandLength)
+//        hashSlice(arr, params.bandLength, 0, 0, params.bandLength, params.hashBits)
+    }
   }
 
 
   def ripBits(sketchArray: Array[Long], bitsPerSketch: Int, i: Int, band: Int, bandBits: Int): Int =
     Bits.getBitsOverlapping(sketchArray, bitsPerSketch * i + band * bandBits, bandBits).toInt
 
-
-  // === IntLSH =================
-
-  def apply(sk: IntSketching, bands: Int): IntLSH =
-    apply(sk, bands, pickBits(sk.itemsCount), LSHBuildCfg())
-
-  def apply(sk: IntSketching, bands: Int, cfg: LSHBuildCfg): IntLSH =
-    apply(sk, bands, pickBits(sk.itemsCount), cfg)
-
   private def pickBits(len: Int) = math.max(32 - Integer.numberOfLeadingZeros(len), 4)
 
-  def apply(sk: IntSketching, bands: Int, hashBits: Int): IntLSH =
-    apply(sk, bands, hashBits, LSHBuildCfg())
-
-  def apply(sk: IntSketching, bands: Int, hashBits: Int, cfg: LSHBuildCfg): IntLSH = {
-    require(hashBits > 0, "number of hash buts must be non-negative")
-    require(bands > 0, "number of bands must be non-negative")
-
-    val bandBits = sk.sketchLength / bands // how many elements from a sketch is used in one band
-
-    val idxs = buildTables(sk, bands, bandBits, hashBits, cfg) {
-      (sk, itemIdx, start, end) =>
-        val arr = sk.getSketchFragment(itemIdx, start, end)
-        hashSlice(arr, bandBits, 0, 0, bandBits, hashBits)
-    }
-
-    new IntLSH(sk, sk.estimator, LSHCfg(), idxs, sk.itemsCount, sk.sketchLength, bands, bandBits, hashBits)
-  }
 
   def hashSlice(skarr: Array[Int], sketchLength: Int, i: Int, band: Int, bandLength: Int, hashBits: Int) = {
     val start = i * sketchLength + band * bandLength
@@ -201,13 +215,13 @@ object LSH {
     MurmurHash3.finalizeHash(h, end-start)
   }
 
-  /*
   def getSlice(skarr: Array[Int], sketchLength: Int, i: Int, band: Int, bandLength: Int) = {
     val start = i * sketchLength + band * bandLength
     val end   = start + bandLength
     java.util.Arrays.copyOfRange(skarr, start, end)
   }
-  */
+
+
 
 
   def makeReverseMapping(length: Int, bands: Int, idxs: Array[Array[Int]]): Array[Array[Int]] =
@@ -251,7 +265,7 @@ object LSH {
   */
 abstract class LSH { self =>
   type SketchArray
-  type Sketching <: atrox.sketch.Sketching[T] forSome { type T <: SketchArray}
+  type Sketching = atrox.sketch.Sketching[SketchArray]
   type Idxs = Array[Int]
   type SimFun = (Int, Int) => Double
 
@@ -674,25 +688,9 @@ abstract class LSH { self =>
 
 
 
-/** Contains methods shared by IntLSH and MemoryMappedIntLSH */
+
+
 /*
-trait BaseIntLSH extends LSH {
-  def bandHashes(sketchArray: SketchArray, idx: Int): Iterator[Int] =
-    Iterator.tabulate(bands) { b => bandHash(sketchArray, idx, b) }
-
-  def bandHash(sketchArray: SketchArray, idx: Int, band: Int): Int =
-    LSH.hashSlice(sketchArray, sketchLength, idx, band, bandLength, hashBits)
-}
-
-trait BaseBitLSH extends LSH {
-  def bandHashes(sketchArray: Array[Long], idx: Int): Iterator[Int] =
-    Iterator.tabulate(bands) { b => LSH.ripBits(sketchArray, bitsPerSketch, idx, b, bandBits) }
-}
-*/
-
-
-
-
 /** bandLengh - how many elements is in one band
   * hashBits  - how many bits of a hash is used (2^hashBits should be roughly equal to number of items)
   */
@@ -704,7 +702,7 @@ final case class IntLSH(
   ) extends LSH with Serializable {
 
   type SketchArray = Array[Int]
-  type Sketching = IntSketching
+  override type Sketching = IntSketching
 
   def withConfig(newCfg: LSHCfg): IntLSH = copy(cfg = newCfg)
 
@@ -729,7 +727,7 @@ final case class BitLSH(
   ) extends LSH with Serializable {
 
   type SketchArray = Array[Long]
-  type Sketching = BitSketching
+  override type Sketching = BitSketching
 
   def withConfig(newCfg: LSHCfg): BitLSH = copy(cfg = newCfg)
 
@@ -742,4 +740,92 @@ final case class BitLSH(
       val bucket = b * (1 << bandBits) + h
       idxs(bucket)
     }.filter { idxs => cfg.accept(idxs) }
+}
+  */
+
+
+
+
+final case class LSHObj[SkArr](
+    sketch: atrox.sketch.Sketching[SkArr],
+    estimator: Estimator[SkArr],
+    cfg: LSHCfg,
+    table: LSHTable[SkArr]
+  ) extends LSH {
+
+  type SketchArray = SkArr
+
+  def withConfig(newCfg: LSHCfg): LSHObj[SkArr] = copy(cfg = newCfg)
+
+  val itemsCount = table.params.itemsCount
+  val sketchLength = table.params.sketchLength
+  val bands = table.params.bands
+
+  def rawStreamIndexes =
+    table.rawStreamIndexes
+
+  def rawCandidateIndexes(skarr: SkArr, skidx: Int): Array[Idxs] =
+    table.rawCandidateIndexes(skarr, skidx) filter { cfg.accept }
+}
+
+
+
+case class LSHTableParams(
+  sketchLength: Int,
+  bands: Int,
+  bandLength: Int,
+  hashBits: Int,
+  itemsCount: Int
+)
+
+
+// for bit LSH must hold:
+// - sketchLength, bandLength and hashBits are in bits
+// - bandLength == hashBits
+trait LSHTable[SketchArray] {
+  type Idxs = LSH#Idxs
+
+  def params: LSHTableParams
+  def hashFun: (SketchArray, Int, Int, LSHTableParams) => Int
+  def sliceFun: (SketchArray, Int, Int, LSHTableParams) => SketchArray
+
+  def rawStreamIndexes: Iterator[Idxs]
+  def rawCandidateIndexes(skarr: SketchArray, skidx: Int): Array[Idxs] =
+    Array.tabulate(params.bands) { band => lookup(skarr, skidx, band) }
+
+
+  protected def lookup(skarr: SketchArray, skidx: Int, band: Int): Idxs
+}
+
+
+object LSHTable {
+
+  def Int = (
+    (skarr: Array[Int], skidx: Int, band: Int, params: LSHTableParams) =>
+      LSH.hashSlice(skarr, params.sketchLength, skidx, band, params.bandLength, params.hashBits),
+    (skarr: Array[Int], skidx: Int, band: Int, params: LSHTableParams) =>
+      ???
+  )
+
+  def Bit = (
+    (skarr: Array[Long], skidx: Int, band: Int, params: LSHTableParams) =>
+      LSH.ripBits(skarr, params.sketchLength, skidx, band, params.bandLength),
+    (skarr: Array[Long], skidx: Int, band: Int, params: LSHTableParams) =>
+      ???
+  )
+
+}
+
+
+
+trait IntArrayLSHTable[SketchArray] extends LSHTable[SketchArray] {
+
+  def idxs: Array[Array[Int]]
+
+  def rawStreamIndexes: Iterator[Idxs] =
+    idxs.iterator filter (_ != null)
+
+  protected def lookup(skarr: SketchArray, skidx: Int, band: Int): Idxs =
+    idxs(band * (1 << params.hashBits) + hashFun(skarr, skidx, band, params))
+
 }
