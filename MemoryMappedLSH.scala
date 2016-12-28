@@ -7,50 +7,28 @@ import java.nio.channels.FileChannel
 import atrox.fastSparse
 
 
-/*
-final case class MemoryMappedIntLSH(
-  sketch: IntSketching,
-  estimator: Estimator[Array[Int]],
-  cfg: LSHCfg,
-  mm: IntBuffer
-) extends LSH {
+abstract class MemoryMappedLSHTable[SketchArray](val mm: IntBuffer) extends LSHTable[SketchArray] {
 
-  type SketchArray = Array[Int]
-  type Sketching = IntSketching
+  val params = LSHTableParams(
+    sketchLength = mm.get(0),
+    bands        = mm.get(1),
+    bandLength   = mm.get(2),
+    hashBits     = mm.get(3),
+    itemsCount   = mm.get(4)
+  )
 
-  def withConfig(newCfg: LSHCfg): MemoryMappedIntLSH = copy(cfg = newCfg)
-
-}
-*/
-
-
-trait MemoryMappedLSHTable[SketchArray] extends LSHTable[SketchArray] {
-
-  def mm: IntBuffer
-
-  val sketchLength = mm.get(0)
-  val bands        = mm.get(1)
-  val bandLength   = mm.get(2)
-  val hashBits     = mm.get(3)
-  val itemsCount   = mm.get(4)
   private val tableLength = mm.get(5)
 
-  //require(sketchLength == estimator.sketchLength)
-  require(bands * (1 << hashBits) == tableLength)
+  require(params.bands * (1 << params.hashBits) == tableLength)
 
   private def headerSize = 6
 
   def rawStreamIndexes: Iterator[Idxs] = Iterator.tabulate(tableLength)(idxs) filter (arr => arr != null && arr.length != 0)
 
-//  def rawCandidateIndexes(skarr: SketchArray, skidx: Int): Array[Idxs] =
-//    Array.tabulate(bands) { b =>
-//      val h = LSH.hashSlice(skarr, sketchLength, skidx, b, bandLength, hashBits)
-//      val bucket = b * (1 << hashBits) + h
-//      idxs(bucket)
-//    }.filter { idxs => cfg.accept(idxs) }
+  protected def lookup(skarr: SketchArray, skidx: Int, band: Int): Idxs =
+    idxs(band * (1 << params.hashBits) + hashFun(skarr, skidx, band, params))
 
-
-  val idxs = { (idx: Int) =>
+  protected def idxs(idx: Int) = {
     require(idx < tableLength, s"idx < tableLength ($idx < $tableLength)")
 
     val start = mm.get(headerSize + idx)
@@ -68,11 +46,11 @@ trait MemoryMappedLSHTable[SketchArray] extends LSHTable[SketchArray] {
     res
   }
 
-  //override def toString = s"MemoryMappedIntLSH(sketchLength = $sketchLength, bands = $bands, bandLength = $bandLength, hashBits = $hashBits, itemsCount = $itemsCount, tableLength = $tableLength)"
+  override def toString = s"MemoryMappedLSHTable($mm, params = $params, tableLength = $tableLength)"
 }
 
-/*
-object MemoryMappedIntLSH {
+
+object MemoryMappedLSHTable {
 
   def mmapTable(fileName: String): IntBuffer = {
     val chan = new RandomAccessFile(fileName, "r")
@@ -86,39 +64,38 @@ object MemoryMappedIntLSH {
       .asReadOnlyBuffer
   }
 
-  def mmap(fileName: String, estimator: Estimator[Array[Int]], cfg: LSHCfg = LSHCfg()): MemoryMappedIntLSH =
-    MemoryMappedIntLSH(null, estimator, cfg, mmapTable(fileName))
+  def mmap[SketchArray](fileName: String, es: Estimator[SketchArray])(implicit has: HashAndSlice[SketchArray]): MemoryMappedLSHTable[SketchArray] =
+    new MemoryMappedLSHTable[SketchArray](mmapTable(fileName)) {
+      def hashFun = has.hashFun
+      def sliceFun = has.sliceFun
+    }
 
-
-  def persist(lsh: IntLSH, fileName: String): Unit = {
+  def persist[SketchArray](table: IntArrayLSHTable[SketchArray], fileName: String): Unit = {
     // sketchLength | bands | bandLength | hashBits | itemsCount | idxs length | offsets ... + offset behind the last array | arrays
 
-    val len = (6 + lsh.idxs.length.toLong + 1 + lsh.idxs.map(arrLen).sum) * 4
+    val len = lengthOfTable(table)
     if (len > Int.MaxValue) throw new Exception("too long")
 
-    val mmf = new RandomAccessFile(fileName, "rw")
-      .getChannel()
-      .map(FileChannel.MapMode.READ_WRITE, 0, len)
-
+    val mmf = mmapFile(fileName, len.toInt) 
     val b = mmf.asIntBuffer
 
-    b.put(lsh.sketchLength)
-    b.put(lsh.bands)
-    b.put(lsh.bandLength)
-    b.put(lsh.hashBits)
-    b.put(lsh.itemsCount)
-    b.put(lsh.idxs.length)
+    b.put(table.params.sketchLength)
+    b.put(table.params.bands)
+    b.put(table.params.bandLength)
+    b.put(table.params.hashBits)
+    b.put(table.params.itemsCount)
+    b.put(table.idxs.length)
 
-    var off = 6 + lsh.idxs.length + 1
+    var off = 6 + table.idxs.length + 1
 
-    for (arr <- lsh.idxs) {
+    for (arr <- table.idxs) {
       b.put(off)
       off += arrLen(arr)
     }
 
     b.put(off)
 
-    for (arr <- lsh.idxs) {
+    for (arr <- table.idxs) {
       if (arr != null) {
         b.put(arr)
       }
@@ -128,7 +105,14 @@ object MemoryMappedIntLSH {
 
   }
 
+  protected def lengthOfTable[SketchArray](table: IntArrayLSHTable[SketchArray]) =
+    (6 + table.idxs.length.toLong + 1 + table.idxs.map(arrLen).sum) * 4
+
+  protected def mmapFile(fileName: String, length: Int) =
+    new RandomAccessFile(fileName, "rw")
+      .getChannel()
+      .map(FileChannel.MapMode.READ_WRITE, 0, length)
+
   private def arrLen(arr: Array[Int]) = if (arr == null) 0 else arr.length
 
 }
-*/
