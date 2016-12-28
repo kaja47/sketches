@@ -411,21 +411,22 @@ abstract class LSH { self =>
     }
   }
 
-  /*
-  val rawSimilarItemsStream = new BulkQuery[Iterator[Sim]] {
+  val rawSimilarItemsStream = new BulkQuery[Iterator[(Int, Iterator[Sim])]] {
     def apply(minEst: Double, minSim: Double, f: SimFun) = {
       if (minEst == LSH.NoEstimate) {
         requireSimFun(f)
         rawStreamIndexes flatMap { idxs =>
-          val res = ArrayBuffer[Sim]()
+          val res = ArrayBuffer[(Int, Iterator[Sim])]()
           var i = 0 ; while (i < idxs.length) {
+            val buff = ArrayBuffer[Sim]()
             var j = i+1 ; while (j < idxs.length) {
               var sim: Double = 0.0
               if ({ sim = f(idxs(i), idxs(j)) ; sim >= minSim }) {
-                res += Sim(idxs(i), idxs(j), 0.0, sim)
+                buff += Sim(idxs(j), 0.0, sim)
               }
               j += 1
             }
+            res += ((idxs(i), buff.iterator))
             i += 1
           }
           res
@@ -435,18 +436,20 @@ abstract class LSH { self =>
         val minBits = estimator.minSameBits(minEst)
         val skarr = requireSketchArray()
         rawStreamIndexes flatMap { idxs =>
-          val res = ArrayBuffer[Sim]()
+          val res = ArrayBuffer[(Int, Iterator[Sim])]()
           var i = 0 ; while (i < idxs.length) {
+            val buff = ArrayBuffer[Sim]()
             var j = i+1 ; while (j < idxs.length) {
               val bits = estimator.sameBits(skarr, idxs(i), skarr, idxs(j))
               if (bits >= minBits) {
                 var sim: Double = 0.0
                 if (f == null || { sim = f(idxs(i), idxs(j)) ; sim >= minSim }) {
-                  res += Sim(idxs(i), idxs(j), estimator.estimateSimilarity(bits), sim)
+                  buff += Sim(idxs(j), estimator.estimateSimilarity(bits), sim)
                 }
               }
               j += 1
             }
+            res += ((idxs(i), buff.iterator))
             i += 1
           }
           res
@@ -454,7 +457,6 @@ abstract class LSH { self =>
       }
     }
   }
-  */
 
 
   /** must never return duplicates */
