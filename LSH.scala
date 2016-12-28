@@ -68,7 +68,7 @@ case class LSHCfg(
 }
 
 
-case class Sim(a: Int, b: Int, estimatedSimilatity: Double, similarity: Double) {
+case class Sim(a: Int, b: Int, estimatedSimilarity: Double, similarity: Double) {
   def this(a: Int, b: Int, estimatedSimilatity: Double) = this(a, b, estimatedSimilatity, estimatedSimilatity)
 }
 
