@@ -296,10 +296,6 @@ abstract class LSH { self =>
       apply(rawCandidateIndexes(skarr, skidx), idx, minEst, minSim, f)
     def apply(skarr: SketchArray, skidx: Int, idx: Int, minEst: Double): Res =
       apply(skarr, skidx, idx, minEst, 0.0, null)
-    def apply(sketch: Sketching, idx: Int, minEst: Double): Res =
-      apply(sketch.getSketchFragment(idx), 0, idx, minEst, 0.0, null)
-    def apply(sketch: Sketching, idx: Int, minEst: Double, minSim: Double, f: SimFun): Res =
-      apply(sketch.getSketchFragment(idx), 0, idx, minEst, minSim, f)
 
     def apply(idx: Int, minEst: Double, minSim: Double, f: SimFun): Res = {
       require(idx >= 0 && idx < itemsCount, s"index $idx is out of range (0 until $itemsCount)")
