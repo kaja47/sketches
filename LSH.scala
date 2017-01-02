@@ -140,7 +140,7 @@ object LSH {
 
   def apply[SketchArray](sk: Sketching[SketchArray], bands: Int, hashBits: Int = -1, cfg: LSHBuildCfg = LSHBuildCfg())(implicit sw: Switch[SketchArray]) = {
     val table = sw.run(sk, bands, hashBits, cfg)
-    LSHObj(sk, sk.estimator, LSHCfg(), table)
+    LSHObj[Int, SketchArray, IntArrayLSHTable[SketchArray]](sk, sk.estimator, LSHCfg(), table, Querying.sketching(sk))
   }
 
 
@@ -243,7 +243,19 @@ object LSH {
     res
   }
 
+  type SimFun = (Int, Int) => Double
+
 }
+
+
+object Querying {
+  type Fun[T, SketchArray] = T => (SketchArray, Int)
+
+  def sketch[SketchArray](sk: Sketch[SketchArray])                    = (itemIdx: Int) => (sk.sketchArray, itemIdx)
+  def sketching[SketchArray](sk: atrox.sketch.Sketching[SketchArray]) = (itemIdx: Int) => (sk.getSketchFragment(itemIdx), 0)
+  def sketcher[T, SketchArray](sk: Sketchers[T, SketchArray])         = (item: T)      => (sk.getSketchFragment(item), 0)
+}
+
 
 
 /** LSH
@@ -258,13 +270,14 @@ object LSH {
   *
   * every Idxs array must be sorted
   */
-abstract class LSH { self =>
+abstract class LSH[T] { self =>
   type SketchArray
   type Sketching = atrox.sketch.Sketching[SketchArray]
   type Idxs = Array[Int]
-  type SimFun = (Int, Int) => Double
+  type SimFun = LSH.SimFun
 
   def sketch: Sketching // might be null
+  def querying: Querying.Fun[T, SketchArray]
   def itemsCount: Int
   def estimator: Estimator[SketchArray]
   def cfg: LSHCfg
@@ -275,7 +288,7 @@ abstract class LSH { self =>
     case _ => sys.error("Sketch instance required")
   }
 
-  def withConfig(cfg: LSHCfg): LSH
+  def withConfig(cfg: LSHCfg): LSH[T]
 
   def probabilityOfInclusion(sim: Double) = {
     val bandLen = estimator.sketchLength / bands
@@ -289,6 +302,11 @@ abstract class LSH { self =>
 
   trait Query[Res] {
     def apply(candidateIdxs: Array[Idxs], idx: Int, minEst: Double, minSim: Double, f: SimFun): Res
+
+    def apply(q: T, minEst: Double, minSim: Double, f: SimFun): Res = {
+      val (skarr, skidx) = querying(q)
+      apply(rawCandidateIndexes(skarr, skidx), -1, minEst, minSim, f)
+    }
 
     /** skidx is an index into the provided sketch array instance
      *  idx is the global index of the current item that will be used as a field in Sim object and passed into SimFun */
@@ -741,16 +759,17 @@ final case class BitLSH(
 
 
 
-final case class LSHObj[SkArr, Table <: LSHTable[SkArr]](
+final case class LSHObj[T, SkArr, Table <: LSHTable[SkArr]](
     sketch: atrox.sketch.Sketching[SkArr],
     estimator: Estimator[SkArr],
     cfg: LSHCfg,
-    table: Table
-  ) extends LSH {
+    table: Table,
+    querying: Querying.Fun[T, SkArr]
+  ) extends LSH[T] {
 
   type SketchArray = SkArr
 
-  def withConfig(newCfg: LSHCfg): LSHObj[SkArr, Table] = copy(cfg = newCfg)
+  def withConfig(newCfg: LSHCfg): LSHObj[T, SkArr, Table] = copy(cfg = newCfg)
 
   val itemsCount = table.params.itemsCount
   val sketchLength = table.params.sketchLength
@@ -778,7 +797,7 @@ case class LSHTableParams(
 // - sketchLength, bandLength and hashBits are in bits
 // - bandLength == hashBits
 trait LSHTable[SketchArray] {
-  type Idxs = LSH#Idxs
+  type Idxs = Array[Int]
 
   def params: LSHTableParams
   def hashFun: (SketchArray, Int, Int, LSHTableParams) => Int
