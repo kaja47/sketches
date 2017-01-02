@@ -703,58 +703,9 @@ abstract class LSH[T] { self =>
 
 
 
-/*
-/** bandLengh - how many elements is in one band
-  * hashBits  - how many bits of a hash is used (2^hashBits should be roughly equal to number of items)
-  */
-final case class IntLSH(
-    sketch: IntSketching, estimator: Estimator[Array[Int]], cfg: LSHCfg,
-    idxs: Array[Array[Int]],        // mapping from a bucket to item idxs that hash into it
-    itemsCount: Int,
-    sketchLength: Int, bands: Int, bandLength: Int, hashBits: Int
-  ) extends LSH with Serializable {
-
-  type SketchArray = Array[Int]
-  override type Sketching = IntSketching
-
-  def withConfig(newCfg: LSHCfg): IntLSH = copy(cfg = newCfg)
-
-  def rawStreamIndexes: Iterator[Idxs] = idxs.iterator filter (_ != null)
-
-  def rawCandidateIndexes(skarr: SketchArray, skidx: Int): Array[Idxs] =
-    Array.tabulate(bands) { b =>
-      val h = LSH.hashSlice(skarr, sketchLength, skidx, b, bandLength, hashBits)
-      val bucket = b * (1 << hashBits) + h
-      idxs(bucket)
-    }.filter { idxs => cfg.accept(idxs) }
 }
 
 
-
-
-final case class BitLSH(
-    sketch: BitSketching, estimator: Estimator[Array[Long]], cfg: LSHCfg,
-    idxs: Array[Array[Int]],        // mapping from a bucket to item idxs that hash into it
-    itemsCount: Int,
-    bitsPerSketch: Int, bands: Int, bandBits: Int
-  ) extends LSH with Serializable {
-
-  type SketchArray = Array[Long]
-  override type Sketching = BitSketching
-
-  def withConfig(newCfg: LSHCfg): BitLSH = copy(cfg = newCfg)
-
-
-  def rawStreamIndexes: Iterator[Idxs] = idxs.iterator filter (_ != null)
-
-  def rawCandidateIndexes(skarr: SketchArray, skidx: Int): Array[Idxs] =
-    Array.tabulate(bands) { b =>
-      val h = LSH.ripBits(skarr, bitsPerSketch, skidx, b, bandBits)
-      val bucket = b * (1 << bandBits) + h
-      idxs(bucket)
-    }.filter { idxs => cfg.accept(idxs) }
-}
-  */
 
 
 
