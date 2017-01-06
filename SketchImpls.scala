@@ -24,33 +24,21 @@ object MinHash {
     singleBitWeighted(hashFunctions, (a: Any) => 1)
 
   def singleBitWeighted[T, El](hashFunctions: Int, weights: El => Int)(implicit mk: MinHashImpl[T, El]): BitSketchers[T] =
-    Sketchers(hashFunctions, (i: Int) => SingleBitMinHasher(mk(HashFunc.random(i*1000), weights)), SingleBitEstimator(hashFunctions), None)
+    Sketchers(hashFunctions, (i: Int) => onebit(mk(HashFunc.random(i*1000), weights)), SingleBitEstimator(hashFunctions), None)
 
-
-
-  trait WeightedMinHasher[-T] extends IntSketcher[T] {
-    def apply(t: T): Int
-  }
-
-  case class SingleBitMinHasher[T](mh: WeightedMinHasher[T]) extends BitSketcher[T] {
-    def apply(x: T): Boolean = (mh(x) & 1) != 0
-  }
+  private def onebit[T](f: T => Int) = (t: T) => (f(t) & 1) != 0
 
 
   trait MinHashImpl[T, +El] {
-    def apply(hf: HashFunc[Int], weights: El => Int): WeightedMinHasher[T]
+    def apply(hf: HashFunc[Int], weights: El => Int): (T => Int)
   }
 
   implicit val IntArrayMinHashImpl = new MinHashImpl[Array[Int], Int] {
-    def apply(hf: HashFunc[Int], weights: Int => Int): WeightedMinHasher[Array[Int]] =
-      new WeightedMinHasher[Array[Int]] { def apply(set: Array[Int]) = minhashArr(set, hf, weights) }
+    def apply(hf: HashFunc[Int], weights: Int => Int) = (set: Array[Int]) => minhashArr(set, hf, weights)
   }
 
-  (hf, weights) => { (set) => minhashArr(set, hf, weights) }
-
   implicit def GeneralMinHashImpl[El] = new MinHashImpl[Traversable[El], El] {
-    def apply(hf: HashFunc[Int], weights: El => Int): WeightedMinHasher[Traversable[El]] =
-      new WeightedMinHasher[Traversable[El]] { def apply(set: Traversable[El]): Int = minhashTrav(set, hf, weights) }
+    def apply(hf: HashFunc[Int], weights: El => Int) = (set: Traversable[El])=> minhashTrav(set, hf, weights)
   }
 
 

@@ -24,12 +24,12 @@ case class SketchCfg(
 
 
 
-trait IntSketcher[-T] {
+trait IntSketcher[-T] extends (T => Int) {
   /** reduces one item to one component of sketch */
   def apply(item: T): Int
 }
 
-trait BitSketcher[-T] {
+trait BitSketcher[-T] extends (T => Boolean) {
   /** reduces one item to one component of sketch */
   def apply(item: T): Boolean
 }
@@ -58,18 +58,18 @@ trait Sketchers[T, SketchArray] { self =>
 }
 
 object Sketchers {
-  def apply[T](sketchers: Array[IntSketcher[T]], estimator: IntEstimator, rank: Option[Rank[T, T]]) = IntSketchersOf(sketchers, estimator, rank)
-  def apply[T](n: Int, mk: Int => IntSketcher[T], estimator: IntEstimator, rank: Option[Rank[T, T]]) = IntSketchersOf(Array.tabulate(n)(mk), estimator, rank)
+  def apply[T](sketchers: Array[T => Int], estimator: IntEstimator, rank: Option[Rank[T, T]]) = IntSketchersOf(sketchers, estimator, rank)
+  def apply[T](n: Int, mk: Int => (T => Int), estimator: IntEstimator, rank: Option[Rank[T, T]]) = IntSketchersOf(Array.tabulate(n)(mk), estimator, rank)
 
-  def apply[T](sketchers: Array[BitSketcher[T]], estimator: BitEstimator, rank: Option[Rank[T, T]]) = BitSketchersOf(sketchers, estimator, rank)
-  def apply[T](n: Int, mk: Int => BitSketcher[T], estimator: BitEstimator, rank: Option[Rank[T, T]]) = BitSketchersOf(Array.tabulate(n)(mk), estimator, rank)
+  def apply[T](sketchers: Array[T => Boolean], estimator: BitEstimator, rank: Option[Rank[T, T]]) = BitSketchersOf(sketchers, estimator, rank)
+  def apply[T](n: Int, mk: Int => T => Boolean, estimator: BitEstimator, rank: Option[Rank[T, T]]) = BitSketchersOf(Array.tabulate(n)(mk), estimator, rank)
 }
 
 trait IntSketchers[T] extends Sketchers[T, Array[Int]]
 trait BitSketchers[T] extends Sketchers[T, Array[Long]]
 
 case class IntSketchersOf[T](
-  sketchers: Array[IntSketcher[T]],
+  sketchers: Array[T => Int],
   estimator: IntEstimator,
   rank: Option[Rank[T, T]]
 ) extends IntSketchers[T] {
@@ -91,7 +91,7 @@ case class IntSketchersOf[T](
 }
 
 case class BitSketchersOf[T](
-  sketchers: Array[BitSketcher[T]],
+  sketchers: Array[T => Boolean],
   estimator: BitEstimator,
   rank: Option[Rank[T, T]]
 ) extends BitSketchers[T] {
