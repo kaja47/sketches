@@ -12,13 +12,15 @@ import atrox.sketch._
 
 val sets: Seq[Set[Int]] = loadMyData()
 
+val simFun = SimFun[Array[Int]]((a, b) => jaccardSimilarity(a, b), sets)
+
 val (bands, hashes) = LSH.pickHashesAndBands(threshold = 0.5, maxHashes = 64)
 val minhash = Sketch(sets, MinHash[Set[Int]](hashes))
-val lsh     = LSH(minhash, bands)
+val lsh     = LSH(minhash, simFun, LSHBuildCfg(bands = bands))
 
 val cfg = LSHCfg(maxResults = 50)
 
-for (Sim(idx1, idx2, estimate, similarity) <- lsh.withConfig(cfg).allSimilarItems(minEst = 0.5)) {
+for (Sim(idx1, idx2, estimate, similarity) <- lsh.withConfig(cfg).allSimilarItems) {
   println(s"similarity between item $idx1 and $idx2 is estimated to $estimate")
 }
 ```
@@ -48,8 +50,8 @@ And more query methods.
 ```scala
 lsh.similarItems(idx)
 lsh.similarIndexes(idx)
-lsh.allSimilarItems()
-lsh.allSimilarIndexes()
+lsh.allSimilarItems
+lsh.allSimilarIndexes
 ```
 
 And more sketching methods.

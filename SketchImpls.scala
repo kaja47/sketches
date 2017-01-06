@@ -354,15 +354,15 @@ object SpectralHashing {
 
 
 object HammingDistance {
-  def apply(arr: Array[Long], bits: Int): BitSketch[Nothing] = {
+  def apply(arr: Array[Long], bits: Int): BitSketch[Any] = {
     require(bits % 64 == 0)
 
-    BitSketch[Nothing](
+    BitSketch[Any](
       arr,
-      new BitSketchers[Nothing] { self =>
+      new BitSketchers[Any] { self =>
         val sketchLength = bits
         val estimator = Estimator(bits)
-        def getSketchFragment(item: Nothing, from: Int, to: Int) = sys.error("this should not happen")
+        def getSketchFragment(item: Any, from: Int, to: Int) = sys.error("this should not happen")
       }
     )
   }

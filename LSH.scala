@@ -11,6 +11,10 @@ import Sketching.{ BitSketching, IntSketching } // types
 
 
 case class LSHBuildCfg(
+  bands: Int,
+
+  hashBits: Int = -1,
+
   /** every bucket that has more than this number of elements is discarded */
   maxBucketSize: Int = Int.MaxValue,
 
@@ -33,11 +37,6 @@ case class LSHCfg(
   /** How many final results to return. */
   maxResults: Int = Int.MaxValue,
 
-  /** Forces LSH object to use only estimate to select top-k results.
-    * This option has effect only for allSimilarItems methods called with
-    * option maxResults set. */
-  orderByEstimate: Boolean = false,
-
   /** If this is set to false, some operations might use faster code, that
     * needs to store all similar items in memory */
   compact: Boolean = true,
@@ -59,7 +58,6 @@ case class LSHCfg(
     |  maxBucketSize = $maxBucketSize
     |  maxCandidates = $maxCandidates
     |  maxResults = $maxResults
-    |  orderByEstimate = $orderByEstimate
     |  compact = $compact
     |  parallel = $parallel
     |  parallelPartialResultSize = $parallelPartialResultSize
@@ -68,9 +66,8 @@ case class LSHCfg(
 }
 
 
-case class Sim(idx: Int, estimatedSimilarity: Double, similarity: Double) {
-  def this(idx: Int, estimatedSimilatity: Double) = this(idx, estimatedSimilatity, estimatedSimilatity)
-}
+/** sim field might be similarity or distance, depending whether SimFun or DistFun was used */
+case class Sim(idx: Int, sim: Double)
 
 
 object LSH {
@@ -95,7 +92,7 @@ object LSH {
     (hashes, bands)
   }
 
-  def buildTables[SkArr](sk: Sketching[SkArr], params: LSHTableParams, cfg: LSHBuildCfg)(has: HashAndSlice[SkArr]): IntArrayLSHTable[SkArr] = {
+  def _buildTables[T, SkArr](sk: Sketching[T, SkArr], params: LSHTableParams, cfg: LSHBuildCfg)(has: HashAndSlice[SkArr]): IntArrayLSHTable[SkArr] = {
     val bandSize = (1 << params.hashBits)
 
     def runItems(f: (Int, Int, Int) => Unit) = { // f args: band, hash, itemIdx
@@ -132,19 +129,9 @@ object LSH {
     }
   }
 
-
-
-  trait Switch[SketchArray] { def run: (Sketching[SketchArray], Int, Int, LSHBuildCfg) => IntArrayLSHTable[SketchArray] }
-  implicit object SwitchInt extends Switch[Array[Int]]  { val run = applyInt _ }
-  implicit object SwitchBit extends Switch[Array[Long]] { val run = applyBit _ }
-
-  def apply[SketchArray](sk: Sketching[SketchArray], bands: Int, hashBits: Int = -1, cfg: LSHBuildCfg = LSHBuildCfg())(implicit sw: Switch[SketchArray]) = {
-    val table = sw.run(sk, bands, hashBits, cfg)
-    LSHObj[Int, SketchArray, IntArrayLSHTable[SketchArray]](sk, sk.estimator, LSHCfg(), table, Querying.sketching(sk))
-  }
-
-
-  def applyBit(sk: BitSketching, bands: Int, hashBits: Int, cfg: LSHBuildCfg) = {
+  def buildBitLshTable[T](sk: BitSketching[T], cfg: LSHBuildCfg): IntArrayLSHTable[Array[Long]] = {
+    val bands = cfg.bands
+    val hashBits = cfg.hashBits
     require(sk.sketchLength % 64 == 0, "BitLSH must have multiple of 64 hashes for now")
     require(bands > 0, "number of bands must be non-negative")
 
@@ -160,12 +147,14 @@ object LSH {
       itemsCount   = sk.itemsCount
     )
 
-    buildTables(sk, params, cfg)(HashAndSlice.Bit)
+    _buildTables(sk, params, cfg)(HashAndSlice.Bit)
 //      (sk, itemIdx, band, params) =>
 //        sk.getSketchFragment(itemIdx, band*params.bandLength, (band+1)*params.bandLength)(0).toInt
   }
 
-  def applyInt(sk: IntSketching, bands: Int, hashBits: Int, cfg: LSHBuildCfg) = {
+  def buildIntLshTable[T](sk: IntSketching[T], cfg: LSHBuildCfg): IntArrayLSHTable[Array[Int]] = {
+    val bands = cfg.bands
+    val hashBits = cfg.hashBits
     val realHashBits = if (hashBits <= 0) pickBits(sk.itemsCount) else hashBits
     require(realHashBits > 0, "number of hash bits must be non-negative")
     require(bands > 0, "number of bands must be non-negative")
@@ -180,11 +169,37 @@ object LSH {
       itemsCount   = sk.itemsCount
     )
 
-    buildTables(sk, params, cfg)(HashAndSlice.Int)
+    _buildTables(sk, params, cfg)(HashAndSlice.Int)
 //      (sk, itemIdx, band, params) =>
 //        val arr = sk.getSketchFragment(itemIdx, band*params.bandLength, (band+1)*params.bandLength)
 //        hashSlice(arr, params.bandLength, 0, 0, params.bandLength, params.hashBits)
   }
+
+
+
+  sealed trait Switch[SketchArray]
+  implicit object SwitchInt extends Switch[Array[Int]]
+  implicit object SwitchBit extends Switch[Array[Long]]
+
+  def mkTlb[T, SketchArray: Switch](sk: Sketching[T, SketchArray], cfg: LSHBuildCfg): IntArrayLSHTable[SketchArray] = implicitly[Switch[SketchArray]] match {
+    case SwitchInt => buildIntLshTable(sk.asInstanceOf[Sketching[T, Array[Int]]], cfg)
+    case SwitchBit => buildBitLshTable(sk.asInstanceOf[Sketching[T, Array[Long]]], cfg)
+  }
+
+
+  def apply[T, S, SketchArray: Switch](sk: Sketching[T, SketchArray], rank: Rank[T, S], cfg: LSHBuildCfg): LSHObj[T, S, SketchArray, IntArrayLSHTable[SketchArray]] =
+    LSHObj(mkTlb(sk, cfg), SketchingQuery(sk, sk.sketchers), rank)
+
+  def apply[T, S, SketchArray: Switch](items: IndexedSeq[T], sk: Sketchers[T, SketchArray], rank: Rank[T, S], cfg: LSHBuildCfg): LSHObj[T, S, SketchArray, IntArrayLSHTable[SketchArray]] =
+    apply(SketchingOf(items, sk), rank, cfg)
+
+
+  def estimating[T, SketchArray: Switch](sk: Sketch[T, SketchArray], cfg: LSHBuildCfg): LSHObj[T, (SketchArray, Int), SketchArray, IntArrayLSHTable[SketchArray]] =
+    apply(sk, SketchRank(sk, sk.sketchers), cfg)
+
+  def estimating[T, SketchArray: Switch](items: IndexedSeq[T], sk: Sketchers[T, SketchArray], cfg: LSHBuildCfg): LSHObj[T, (SketchArray, Int), SketchArray, IntArrayLSHTable[SketchArray]] =
+    apply(items, sk, SketchRank(Sketch(items, sk), sk), cfg)
+
 
 
   def ripBits(sketchArray: Array[Long], bitsPerSketch: Int, i: Int, band: Int, bandBits: Int): Int =
@@ -248,12 +263,106 @@ object LSH {
 }
 
 
-object Querying {
-  type Fun[T, SketchArray] = T => (SketchArray, Int)
 
-  def sketch[SketchArray](sk: Sketch[SketchArray])                    = (itemIdx: Int) => (sk.sketchArray, itemIdx)
-  def sketching[SketchArray](sk: atrox.sketch.Sketching[SketchArray]) = (itemIdx: Int) => (sk.getSketchFragment(itemIdx), 0)
-  def sketcher[T, SketchArray](sk: Sketchers[T, SketchArray])         = (item: T)      => (sk.getSketchFragment(item), 0)
+/** Trait implementing querying into LSH tables. */
+trait Query[-Q, SketchArray] {
+  def query(q: Q): (SketchArray, Int)
+  def query(idx: Int): (SketchArray, Int)
+}
+
+/** Sketching can be fully materialized Sketch table or dataset wrapped in
+  * Sketching class */
+case class SketchingQuery[Q, SketchArray](sk: Sketching[Q, SketchArray], sketchers: Sketchers[Q, SketchArray]) extends Query[Q, SketchArray] {
+  def query(q: Q) = (sketchers.getSketchFragment(q), 0)
+  def query(idx: Int) = (sk.getSketchFragment(idx), 0)
+
+  // TODO Is this specialization needed? Does it have any speed benefit? If
+  // not, it might not be nesessary to produce pair (skarr, skidx) but only
+  // allocated skarr value.
+  //def query(idx: Int) = (sketchTable.sketchArray, idx)
+}
+
+
+trait Rank[-Q, S] {
+  def map(q: Q): S
+  def map(idx: Int): S
+
+  /** Similarity/distance function. Result must be mapped to integer such as
+    * higher number means bigger similarity or smaller distance. */
+  def rank(a: S, b: S): Int
+
+  def rank(a: S, b: Int): Int = rank(a, map(b))
+
+  /** Index based rank. It's intended for bulk methods that operates only on
+    * internal tables. In that case it should be overwritten to use indexes
+    * into Sketch object without any extra allocations. */
+  def rank(a: Int, b: Int): Int = rank(map(a), map(b))
+
+  /** Recover similarity/distance encoded in integer rank value. */
+  def derank(r: Int): Double
+}
+
+
+trait SimRank[@specialized(Long) S] extends Rank[S, S] {
+  def apply(a: S, b: S): Double
+
+  def rank(a: S, b: S): Int = Bits.floatToSortableInt(apply(a, b).toFloat)
+  def derank(r: Int): Double = Bits.sortableIntToFloat(r)
+}
+
+case class SimFun[S](f: (S, S) => Double, dataset: IndexedSeq[S]) extends SimRank[S] {
+  def map(q: S): S = q
+  def map(idx: Int): S = dataset(idx)
+
+  def apply(a: S, b: S) = f(a, b)
+}
+
+
+trait DistRank[@specialized(Long) S] extends Rank[S, S] {
+  def apply(a: S, b: S): Double
+
+  def rank(a: S, b: S): Int = ~Bits.floatToSortableInt(apply(a, b).toFloat)
+  def derank(r: Int): Double = Bits.sortableIntToFloat(~r)
+}
+
+case class DistFun[@specialized(Long) S](f: (S, S) => Double, dataset: IndexedSeq[S]) extends DistRank[S] {
+  def map(q: S): S = q
+  def map(idx: Int): S = dataset(idx)
+
+  def apply(a: S, b: S) = f(a, b)
+}
+
+case class SketchRank[Q, SketchArray](sketch: Sketch[Q, SketchArray], sketchers: Sketchers[Q, SketchArray]) extends Rank[Q, (SketchArray, Int)] {
+
+  type S = (SketchArray, Int)
+  def es = sketch.estimator
+
+  def map(q: Q): S = (sketchers.getSketchFragment(q), 0)
+  def map(idx: Int): S = (sketch.sketchArray, 0)
+
+  def rank(a: S, b: S): Int = {
+    val (skarra, idxa) = a
+    val (skarrb, idxb) = b
+    es.sameBits(skarra, idxa, skarrb, idxb)
+  }
+  override def rank(a: S, b: Int): Int = {
+    val (skarra, idxa) = a
+    es.sameBits(skarra, idxa, sketch.sketchArray, b)
+  }
+  override def rank(a: Int, b: Int): Int = es.sameBits(sketch.sketchArray, a, sketch.sketchArray, b)
+
+  /** Recover similarity/distance encoded in integer rank value. */
+  def derank(r: Int): Double = es.estimateSimilarity(r)
+}
+
+/** Useless ranker that is useful mainly for testing */
+case class BlindRank[Q]() extends Rank[Q, Q] {
+  def map(q: Q): Q = null.asInstanceOf[Q]
+  def map(idx: Int): Q = null.asInstanceOf[Q]
+  def rank(a: Q, b: Q): Int = 1
+  override def rank(a: Q, b: Int): Int = 1
+  override def rank(a: Int, b: Int): Int = 1
+  def derank(r: Int): Double = 1.0
 }
 
 
@@ -270,134 +379,87 @@ object Querying {
   *
   * every Idxs array must be sorted
   */
-abstract class LSH[T] { self =>
+abstract class LSH[Q, S] { self =>
   type SketchArray
-  type Sketching = atrox.sketch.Sketching[SketchArray]
   type Idxs = Array[Int]
   type SimFun = LSH.SimFun
 
-  def sketch: Sketching // might be null
-  def querying: Querying.Fun[T, SketchArray]
+  def query: Query[Q, SketchArray]
+  def rank: Rank[Q, S]
   def itemsCount: Int
-  def estimator: Estimator[SketchArray]
   def cfg: LSHCfg
   def bands: Int
+  def sketchLength: Int
 
-  protected def requireSketchArray(): SketchArray = sketch match {
-    case sk: atrox.sketch.Sketch[_] => sk.sketchArray.asInstanceOf[SketchArray]
-    case _ => sys.error("Sketch instance required")
-  }
-
-  def withConfig(cfg: LSHCfg): LSH[T]
+  def withConfig(cfg: LSHCfg): LSH[Q, S]
 
   def probabilityOfInclusion(sim: Double) = {
-    val bandLen = estimator.sketchLength / bands
+    val bandLen = sketchLength / bands
     1.0 - pow(1.0 - pow(sim, bandLen), bands)
   }
 
   def estimatedThreshold = {
-    val bandLen = estimator.sketchLength / bands
+    val bandLen = sketchLength / bands
     pow(1.0 / bands, 1.0 / bandLen)
-  }
-
-  trait Query[Res] {
-    def apply(candidateIdxs: Array[Idxs], idx: Int, minEst: Double, minSim: Double, f: SimFun): Res
-
-    def apply(q: T, minEst: Double, minSim: Double, f: SimFun): Res = {
-      val (skarr, skidx) = querying(q)
-      apply(rawCandidateIndexes(skarr, skidx), -1, minEst, minSim, f)
-    }
-
-    /** skidx is an index into the provided sketch array instance
-     *  idx is the global index of the current item that will be used as a field in Sim object and passed into SimFun */
-    def apply(skarr: SketchArray, skidx: Int, idx: Int, minEst: Double, minSim: Double, f: SimFun): Res =
-      apply(rawCandidateIndexes(skarr, skidx), idx, minEst, minSim, f)
-    def apply(skarr: SketchArray, skidx: Int, idx: Int, minEst: Double): Res =
-      apply(skarr, skidx, idx, minEst, 0.0, null)
-
-    def apply(idx: Int, minEst: Double, minSim: Double, f: SimFun): Res = {
-      require(idx >= 0 && idx < itemsCount, s"index $idx is out of range (0 until $itemsCount)")
-      apply(sketch.getSketchFragment(idx), 0, idx, minEst, minSim, f)
-    }
-    def apply(idx: Int, minEst: Double): Res = apply(idx, minEst, 0.0, null)
-    def apply(idx: Int): Res = apply(idx, 0.0, 0.0, null)
-    def apply(idx: Int, f: SimFun): Res = apply(idx, LSH.NoEstimate, 0.0, f)
-    def apply(idx: Int, minSim: Double, f: SimFun): Res = apply(idx, LSH.NoEstimate, minSim, f)
   }
 
 
   // =====
 
-  def rawStreamIndexes: Iterator[Idxs]
-  /** same as rawStreamIndexes, but arrays are limited by maxBucketSize */
-  def streamIndexes: Iterator[Idxs] = rawStreamIndexes filter cfg.accept
+  def _streamIndexes: Iterator[Idxs]
+  def _candidateIndexes(skarr: SketchArray, skidx: Int): Array[Idxs]
 
-  def rawCandidateIndexes(skarr: SketchArray, skidx: Int): Array[Idxs]
-  def rawCandidateIndexes(sketch: Sketching, skidx: Int): Array[Idxs] = rawCandidateIndexes(sketch.getSketchFragment(skidx), 0)
-  def rawCandidateIndexes(idx: Int): Array[Idxs] = rawCandidateIndexes(sketch.getSketchFragment(idx), 0)
+  def streamIndexes: Iterator[Idxs] = _streamIndexes filter cfg.accept
 
-  def candidateIndexes(skarr: SketchArray, idx: Int): Idxs = fastSparse.union(rawCandidateIndexes(skarr, idx))
-  def candidateIndexes(sketch: Sketching, idx: Int): Idxs = fastSparse.union(rawCandidateIndexes(sketch, idx))
-  def candidateIndexes(idx: Int): Idxs = fastSparse.union(rawCandidateIndexes(idx))
 
-  // If minEst is set to Double.NegativeInfinity, no estimates are computed.
-  // Instead candidates are directly filtered through similarity function.
-  val rawSimilarIndexes = new Query[Idxs] {
-    def apply(candidateIdxs: Array[Idxs], idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs = {
-      val res = new ArrayBuilder.ofInt
 
-      if (minEst == LSH.NoEstimate) {
-        requireSimFun(f)
-        for (idxs <- candidateIdxs) {
-          var i = 0 ; while (i < idxs.length) {
-            if (f(idxs(i), idx) >= minSim) { res += idxs(i) }
-            i += 1
-          }
-        }
-
-      } else {
-        val minBits = estimator.minSameBits(minEst)
-        val skarr = requireSketchArray()
-        for (idxs <- candidateIdxs) {
-          var i = 0 ; while (i < idxs.length) {
-            val bits = estimator.sameBits(skarr, idxs(i), skarr, idx)
-            if (bits >= minBits && (f == null || f(idxs(i), idx) >= minSim)) { res += idxs(i) }
-            i += 1
-          }
-        }
-
-      }
-
-      res.result
-    }
+  def rawCandidateIndexes(q: Q): Array[Idxs] = {
+    val (skarr, skidx) = query.query(q)
+    _candidateIndexes(skarr, skidx)
+  }
+  def rawCandidateIndexes(idx: Int): Array[Idxs] = {
+    val (skarr, skidx) = query.query(idx)
+    _candidateIndexes(skarr, skidx)
   }
 
-  protected def _similar(candidateIdxs: Array[Idxs], idx: Int, minEst: Double, minSim: Double, f: SimFun): IndexResultBuilder = {
+  def candidateIndexes(q: Q): Idxs =
+    fastSparse.union(rawCandidateIndexes(q))
+
+  def similarIndexes(q: Q): Idxs = _similar(rawCandidateIndexes(q), rank.map(q)).result
+  def similarIndexes(idx: Int): Idxs = _similar(rawCandidateIndexes(idx), idx).result
+
+  def similarItems(q: Q): Iterator[Sim] = indexResultBuilderToSims(_similar(rawCandidateIndexes(q), rank.map(q)))
+  def similarItems(idx: Int): Iterator[Sim] = indexResultBuilderToSims(_similar(rawCandidateIndexes(idx), idx))
+
+  protected def _similar(candidateIdxs: Array[Idxs], s: S): IndexResultBuilder = {
     val candidates = selectCandidates(candidateIdxs)
     val res = newIndexResultBuilder()
-    runLoop(idx, candidates, minEst, minSim, f, res)
+
+    var i = 0 ; while (i < candidates.length) {
+      res += (candidates(i), rank.rank(s, candidates(i)))
+      i += 1
+    }
+
     res
   }
 
-  // similarIndexes().toSet == (rawSimilarIndexes().distinct.toSet - idx)
-  val similarIndexes = new Query[Idxs] {
-    def apply(candidateIdxs: Array[Idxs], idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs =
-      _similar(candidateIdxs, idx, minEst, minSim, f).result
-  }
+  protected def _similar(candidateIdxs: Array[Idxs], idx: Int): IndexResultBuilder = {
+    val candidates = selectCandidates(candidateIdxs)
+    val res = newIndexResultBuilder()
 
-  val similarItems = new Query[Iterator[Sim]] {
-    def apply(candidateIdxs: Array[Idxs], idx: Int, minEst: Double, minSim: Double, f: SimFun): Iterator[Sim] = {
-      if (cfg.orderByEstimate) require(minEst != LSH.NoEstimate, "For orderByEstimate to work estimation must not be disabled.")
-      val ff = if (cfg.orderByEstimate) null else f
-      val simIdxs = _similar(candidateIdxs, idx, minEst, minSim, ff)
-      indexResultBuilderToSims(idx, simIdxs, f, minEst == LSH.NoEstimate)
+    var i = 0 ; while (i < candidates.length) {
+      if (candidates(i) != idx) {
+        res += (candidates(i), rank.rank(idx, candidates(i)))
+      }
+      i += 1
     }
-  }
 
+    res
+  }
 
 
   /** must never return duplicates */
-  private def selectCandidates(candidateIdxs: Array[Idxs]): Idxs = {
+  protected def selectCandidates(candidateIdxs: Array[Idxs]): Idxs = {
     // TODO candidate selection can be done on the fly without allocations
     //      using some sort of merging cursor
 
@@ -413,7 +475,7 @@ abstract class LSH[T] { self =>
     }
   }
 
-  private def sumLength(xs: Array[Idxs]) = {
+  protected def sumLength(xs: Array[Idxs]) = {
     var sum, i = 0
     while (i < xs.length) {
       sum += xs(i).length
@@ -422,184 +484,51 @@ abstract class LSH[T] { self =>
     sum
   }
 
-  private def runLoop(idx: Int, candidates: Idxs, minEst: Double, minSim: Double, f: SimFun, res: IndexResultBuilder) =
-    if (minEst == LSH.NoEstimate) {
-      requireSimFun(f)
-      runLoopNoEstimate(idx, candidates, minSim, f, res)
-    } else {
-      val skarr = requireSketchArray()
-      runLoopYesEstimate(idx, candidates, skarr, minEst, minSim, f, res)
-    }
-
-  private def runLoopNoEstimate(idx: Int, candidates: Idxs, minSim: Double, f: SimFun, res: IndexResultBuilder) = {
-    var i = 0 ; while (i < candidates.length) {
-      var sim = 0.0
-      if (idx != candidates(i) && { sim = f(candidates(i), idx) ; sim >= minSim }) {
-        res += (candidates(i), sim)
-      }
-      i += 1
-    }
-  }
-
-  private def runLoopYesEstimate(idx: Int, candidates: Idxs, skarr: SketchArray, minEst: Double, minSim: Double, f: SimFun, res: IndexResultBuilder) = {
-    val minBits = estimator.minSameBits(minEst)
-    var i = 0 ; while (i < candidates.length) {
-      val bits = estimator.sameBits(skarr, candidates(i), skarr, idx)
-      var sim = 0.0
-      if (bits >= minBits && idx != candidates(i) && (f == null || { sim = f(candidates(i), idx) ; sim >= minSim })) {
-        res += (candidates(i), if (f == null) estimator.estimateSimilarity(bits) else sim)
-      }
-      i += 1
-    }
-  }
-
-
   protected def newIndexResultBuilder(distinct: Boolean = false, maxResults: Int = cfg.maxResults): IndexResultBuilder =
     IndexResultBuilder.make(distinct, maxResults)
 
-  /** This method converts the provided IndexResultBuilder to an iterator of Sim
-    * objects while using similarity measure that was used internally in the
-    * IRB for sorting and ordering. That way it's possible to avoid recomputing
-    * estimate/similarity in certain cases. These cases are when we don't need
-    * both similarity and it's estimate at the same time. Drawback is the fact
-    * that the IRB is internally using float instead of double and therefore
-    * the result might have slightly lower accuracy. */
-  protected def indexResultBuilderToSims(idx: Int, irb: IndexResultBuilder, f: SimFun, noEstimates: Boolean): Iterator[Sim] = {
-    val cur = irb.idxSimCursor
+  protected def indexResultBuilderToSims(irb: IndexResultBuilder): Iterator[Sim] = {
+    val cur = irb.idxScoreCursor
     val res = new ArrayBuffer[Sim](initialSize = irb.size)
 
-    if (noEstimates && f != null) {
-      while (cur.moveNext()) {
-        res += Sim(cur.key, 0.0, cur.value)
-      }
-
-    } else if (!noEstimates && f == null) {
-      while (cur.moveNext()) {
-        res += Sim(cur.key, cur.value, cur.value)
-      }
-
-    } else if (!noEstimates && f != null && cfg.orderByEstimate) {
-      while (cur.moveNext()) {
-        res += Sim(cur.key, cur.value, f(idx, cur.key))
-      }
-
-    } else if (!noEstimates && f != null) {
-      val skarr = requireSketchArray()
-      while (cur.moveNext()) {
-        val est = estimator.estimateSimilarity(skarr, idx, skarr, cur.key)
-        res += Sim(cur.key, est, cur.value)
-      }
-    } else {
-      sys.error("this should not happen")
+    while (cur.moveNext()) {
+      res += Sim(cur.key, rank.derank(cur.value))
     }
+
     res.iterator
   }
-
-  protected def parallelBatches[T, U](xs: Iterator[T], inParallel: Boolean, batchSize: Int = 1024)(f: T => U): Iterator[U] =
-    if (inParallel) {
-      xs.grouped(batchSize).flatMap { batch => batch.par.map(f) }
-    } else {
-      xs.map(f)
-    }
-
-  protected def requireSimFun(f: SimFun) = require(f != null, "similarity function is required")
 
 }
 
 
 
-trait LSHBulkOps[T] { self: LSH[T] =>
+trait LSHBulkOps[Q, S] { self: LSH[Q, S] =>
 
-  trait BulkQuery[Res] {
-    def apply(minEst: Double, minSim: Double, f: SimFun): Res
-    def apply(minEst: Double): Res = apply(minEst, 0.0, null)
-    def apply(): Res = apply(0.0, 0.0, null)
-    def apply(f: SimFun): Res = apply(LSH.NoEstimate, 0.0, f)
-    def apply(minSim: Double, f: SimFun): Res = apply(LSH.NoEstimate, minSim, f)
-
-  }
-
-  val allSimilarIndexes = new BulkQuery[Iterator[(Int, Idxs)]] {
-    def apply(minEst: Double, minSim: Double, f: SimFun) =
-      (cfg.compact, cfg.parallel) match {
-        case (true, par) => parallelBatches(0 until itemsCount iterator, par) { idx => (idx, similarIndexes(idx, minEst, minSim, f)) }
-        case (false, _)  => _allSimilar_notCompact(minEst, minSim, f) map { case (idx, res) => (idx, res.result) }
-      }
-  }
-
-  val allSimilarItems = new BulkQuery[Iterator[(Int, Iterator[Sim])]] {
-    def apply(minEst: Double, minSim: Double, f: SimFun) = {
-      (cfg.compact, cfg.parallel) match {
-        case (true, par) => parallelBatches(0 until itemsCount iterator, par) { idx => (idx, similarItems(idx, minEst, minSim, f)) }
-        case (false, _)  =>
-          if (cfg.orderByEstimate) require(minEst != LSH.NoEstimate, "For orderByEstimate to work estimation must not be disabled.")
-          val ff = if (cfg.orderByEstimate) null else f
-          val iter = _allSimilar_notCompact(minEst, minSim, ff)
-          parallelBatches(iter, cfg.parallel, batchSize = 256) { case (idx, simIdxs) =>
-            (idx, indexResultBuilderToSims(idx, simIdxs, f, minEst == LSH.NoEstimate))
-          }
-      }
+  def allSimilarIndexes =
+    (cfg.compact, cfg.parallel) match {
+      case (true, par) => parallelBatches(0 until itemsCount iterator, par) { idx => (idx, similarIndexes(idx)) }
+      case (false, _)  => _allSimilar_notCompact map { case (idx, res) => (idx, res.result) }
     }
-  }
 
-  val rawSimilarItemsStream = new BulkQuery[Iterator[(Int, Iterator[Sim])]] {
-    def apply(minEst: Double, minSim: Double, f: SimFun) = {
-      if (minEst == LSH.NoEstimate) {
-        requireSimFun(f)
-        rawStreamIndexes flatMap { idxs =>
-          val res = ArrayBuffer[(Int, Iterator[Sim])]()
-          var i = 0 ; while (i < idxs.length) {
-            val buff = ArrayBuffer[Sim]()
-            var j = i+1 ; while (j < idxs.length) {
-              var sim: Double = 0.0
-              if ({ sim = f(idxs(i), idxs(j)) ; sim >= minSim }) {
-                buff += Sim(idxs(j), 0.0, sim)
-              }
-              j += 1
-            }
-            res += ((idxs(i), buff.iterator))
-            i += 1
-          }
-          res
+  def allSimilarItems =
+    (cfg.compact, cfg.parallel) match {
+      case (true, par) => parallelBatches(0 until itemsCount iterator, par) { idx => (idx, similarItems(idx)) }
+      case (false, _)  =>
+        val iter = _allSimilar_notCompact
+        parallelBatches(iter, cfg.parallel, batchSize = 256) { case (idx, simIdxs) =>
+          (idx, indexResultBuilderToSims(simIdxs))
         }
-
-      } else {
-        val minBits = estimator.minSameBits(minEst)
-        val skarr = requireSketchArray()
-        rawStreamIndexes flatMap { idxs =>
-          val res = ArrayBuffer[(Int, Iterator[Sim])]()
-          var i = 0 ; while (i < idxs.length) {
-            val buff = ArrayBuffer[Sim]()
-            var j = i+1 ; while (j < idxs.length) {
-              val bits = estimator.sameBits(skarr, idxs(i), skarr, idxs(j))
-              if (bits >= minBits) {
-                var sim: Double = 0.0
-                if (f == null || { sim = f(idxs(i), idxs(j)) ; sim >= minSim }) {
-                  buff += Sim(idxs(j), estimator.estimateSimilarity(bits), sim)
-                }
-              }
-              j += 1
-            }
-            res += ((idxs(i), buff.iterator))
-            i += 1
-          }
-          res
-        }
-      }
     }
-  }
 
   /** Needs to store all similar indexes in memory + some overhead, but it's
     * much faster, because it needs to do only half of iterations and accessed
     * data have better cache locality. */
-  protected def _allSimilar_notCompact(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, IndexResultBuilder)] = {
+  protected def _allSimilar_notCompact: Iterator[(Int, IndexResultBuilder)] = {
 
     // maxCandidates option is simulated via sampling
     val comparisons = streamIndexes.map { idxs => (idxs.length.toDouble - 1) * idxs.length / 2 } sum
     val ratio = itemsCount.toDouble * cfg.maxCandidates / comparisons
     assert(ratio >= 0)
-
-    if (minSim == LSH.NoEstimate) requireSimFun(f)
 
     if (cfg.parallel) {
       val partialResults = new CopyOnWriteArrayList[Array[IndexResultBuilder]]()
@@ -619,7 +548,7 @@ trait LSHBulkOps[T] { self: LSH[T] =>
       streamIndexes.grouped(1024).toVector.par.foreach { idxsgr =>
         val local = tl.get
         for (idxs <- idxsgr) {
-          runTile(idxs, ratio, minEst, minSim, f, local)
+          runTile(idxs, ratio, local)
         }
       }
 
@@ -637,98 +566,65 @@ trait LSHBulkOps[T] { self: LSH[T] =>
     } else {
       val res = Array.fill(itemsCount)(newIndexResultBuilder(distinct = true))
       for (idxs <- streamIndexes) {
-        runTile(idxs, ratio, minEst, minSim, f, res)
+        runTile(idxs, ratio, res)
       }
       Iterator.tabulate(itemsCount) { idx => (idx, res(idx)) }
     }
 
   }
 
-  protected def runTile(idxs: Idxs, ratio: Double, minEst: Double, minSim: Double, f: SimFun, res: Array[IndexResultBuilder]): Unit =
-    if (minEst == LSH.NoEstimate) {
-      runTileNoEstimate(idxs, ratio, minSim, f, res)
+  protected def runTile(idxs: Idxs, ratio: Double, res: Array[IndexResultBuilder]): Unit = {
+    val stripeSize = 64
+    var stripej = 0 ; while (stripej < idxs.length) {
+      if (ThreadLocalRandom.current().nextDouble() < ratio) {
+        val endi = min(stripej + stripeSize, idxs.length)
+        val startj = stripej + 1
+        var j = startj ; while (j < idxs.length) {
+          val realendi = min(j, endi)
+          var i = stripej ; while (i < realendi) {
+
+            val score = rank.rank(idxs(i), idxs(j))
+            res(idxs(i)) += (idxs(j), score)
+            res(idxs(j)) += (idxs(i), score)
+
+            i += 1
+          }
+          j += 1
+        }
+      }
+      stripej += stripeSize
+    }
+  }
+
+  protected def parallelBatches[T, U](xs: Iterator[T], inParallel: Boolean, batchSize: Int = 1024)(f: T => U): Iterator[U] =
+    if (inParallel) {
+      xs.grouped(batchSize).flatMap { batch => batch.par.map(f) }
     } else {
-      runTileYesEstimate(idxs, ratio, minEst, minSim, f, res)
+      xs.map(f)
     }
-
-  protected def runTileNoEstimate(idxs: Idxs, ratio: Double, minSim: Double, f: SimFun, res: Array[IndexResultBuilder]): Unit = {
-    val stripeSize = 64
-    var stripej = 0 ; while (stripej < idxs.length) {
-      if (ThreadLocalRandom.current().nextDouble() < ratio) {
-        val endi = min(stripej + stripeSize, idxs.length)
-        val startj = stripej + 1
-        var j = startj ; while (j < idxs.length) {
-          val realendi = min(j, endi)
-          var i = stripej ; while (i < realendi) {
-
-            var sim = 0.0
-            if ({ sim = f(idxs(i), idxs(j)) ; sim >= minSim }) {
-              res(idxs(i)) += (idxs(j), sim)
-              res(idxs(j)) += (idxs(i), sim)
-            }
-
-            i += 1
-          }
-          j += 1
-        }
-      }
-      stripej += stripeSize
-    }
-  }
-
-  protected def runTileYesEstimate(idxs: Idxs, ratio: Double, minEst: Double, minSim: Double, f: SimFun, res: Array[IndexResultBuilder]): Unit = {
-    val minBits = estimator.minSameBits(minEst)
-    val skarr = requireSketchArray()
-
-    val stripeSize = 64
-    var stripej = 0 ; while (stripej < idxs.length) {
-      if (ThreadLocalRandom.current().nextDouble() < ratio) {
-        val endi = min(stripej + stripeSize, idxs.length)
-        val startj = stripej + 1
-        var j = startj ; while (j < idxs.length) {
-          val realendi = min(j, endi)
-          var i = stripej ; while (i < realendi) {
-
-            val bits = estimator.sameBits(skarr, idxs(i), skarr, idxs(j))
-            var sim = 0.0
-            if (bits >= minBits && (f == null || { sim = f(idxs(i), idxs(j)) ; sim >= minSim })) {
-              sim = if (f == null) estimator.estimateSimilarity(bits) else sim
-              res(idxs(i)) += (idxs(j), sim)
-              res(idxs(j)) += (idxs(i), sim)
-            }
-
-            i += 1
-          }
-          j += 1
-        }
-      }
-      stripej += stripeSize
-    }
-  }
 
 }
 
 
-final case class LSHObj[T, SkArr, Table <: LSHTable[SkArr]](
-    sketch: atrox.sketch.Sketching[SkArr],
-    estimator: Estimator[SkArr],
-    cfg: LSHCfg,
+final case class LSHObj[Q, S, SkArr, Table <: LSHTable[SkArr]](
     table: Table,
-    querying: Querying.Fun[T, SkArr]
-  ) extends LSH[T] with LSHBulkOps[T] {
+    query: Query[Q, SkArr],
+    rank: Rank[Q, S],
+    cfg: LSHCfg = LSHCfg()
+  ) extends LSH[Q, S] with LSHBulkOps[Q, S] {
 
   type SketchArray = SkArr
 
-  def withConfig(newCfg: LSHCfg): LSHObj[T, SkArr, Table] = copy(cfg = newCfg)
+  def withConfig(newCfg: LSHCfg): LSHObj[Q, S, SkArr, Table] = copy(cfg = newCfg)
 
   val itemsCount = table.params.itemsCount
   val sketchLength = table.params.sketchLength
   val bands = table.params.bands
 
-  def rawStreamIndexes =
+  def _streamIndexes =
     table.rawStreamIndexes
 
-  def rawCandidateIndexes(skarr: SkArr, skidx: Int): Array[Idxs] =
+  def _candidateIndexes(skarr: SkArr, skidx: Int): Array[Idxs] =
     table.rawCandidateIndexes(skarr, skidx) filter { cfg.accept }
 }
 

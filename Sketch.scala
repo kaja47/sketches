@@ -114,23 +114,25 @@ case class BitSketchersOf[T](
 
 
 object Sketching {
-  type IntSketching = Sketching[Array[Int]]
-  type BitSketching = Sketching[Array[Long]]
+  type IntSketching[T] = Sketching[T, Array[Int]]
+  type BitSketching[T] = Sketching[T, Array[Long]]
 }
 
-trait Sketching[SketchArray] { self =>
+trait Sketching[T, SketchArray] { self =>
   def itemsCount: Int
   def sketchLength: Int
   def estimator: Estimator[SketchArray]
+  def sketchers: Sketchers[T, SketchArray]
 
   def getSketchFragment(itemIdx: Int, from: Int, to: Int): SketchArray
   def getSketchFragment(itemIdx: Int): SketchArray =
     getSketchFragment(itemIdx, 0, sketchLength)
 
-  def slice(_from: Int, _to: Int): Sketching[SketchArray] = new Sketching[SketchArray] {
+  def slice(_from: Int, _to: Int): Sketching[T, SketchArray] = new Sketching[T, SketchArray] {
     val itemsCount = self.itemsCount
     val sketchLength = _to - _from
     val estimator = self.estimator
+    val sketchers = self.sketchers
     def getSketchFragment(itemIdx: Int, from: Int, to: Int): SketchArray =
       self.getSketchFragment(itemIdx, _from + from, _from + to)
   }
@@ -139,7 +141,7 @@ trait Sketching[SketchArray] { self =>
 case class SketchingOf[T, SketchArray](
   items: IndexedSeq[T],
   sketchers: Sketchers[T, SketchArray]
-) extends Sketching[SketchArray] {
+) extends Sketching[T, SketchArray] {
 
   val sketchLength = sketchers.sketchLength
   val itemsCount = items.length
@@ -158,9 +160,14 @@ object Sketch {
   def apply[T](items: IndexedSeq[T], sk: IntSketchers[T]) = IntSketch(items, sk)
   def apply[T](items: IndexedSeq[T], sk: BitSketchers[T]) = BitSketch(items, sk)
   def apply(items: Array[Long], sk: BitSketchers[Nothing]) = BitSketch[Nothing](items, sk)
+
+  def apply[T, SketchArray](items: IndexedSeq[T], sk: Sketchers[T, SketchArray]): Sketch[T, SketchArray] = sk match {
+    case sk: IntSketchers[T @unchecked] => IntSketch(items, sk)
+    case sk: BitSketchers[T @unchecked] => BitSketch(items, sk)
+  }
 }
 
-trait Sketch[SketchArray] extends Serializable {
+trait Sketch[T, SketchArray] extends Serializable with Sketching[T, SketchArray] {
 
   type Idxs = Array[Int]
   type SimFun = (Int, Int) => Double
@@ -168,14 +175,14 @@ trait Sketch[SketchArray] extends Serializable {
   def sketchArray: SketchArray
   def itemsCount: Int
 
-  def withConfig(cfg: SketchCfg): Sketch[SketchArray]
+  def withConfig(cfg: SketchCfg): Sketch[T, SketchArray]
 
   def estimator: Estimator[SketchArray]
   def cfg: SketchCfg
   def sameBits(idxA: Int, idxB: Int): Int
   def estimateSimilarity(idxA: Int, idxB: Int): Double = estimator.estimateSimilarity(sameBits(idxA, idxB))
   def minSameBits(sim: Double): Int = estimator.minSameBits(sim)
-  def empty: Sketch[SketchArray]
+  def empty: Sketch[T, SketchArray]
 
   def similarIndexes(idx: Int, minEst: Double): Idxs = similarIndexes(idx, minEst, 0.0, null)
   def similarIndexes(idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs = {
@@ -199,13 +206,14 @@ trait Sketch[SketchArray] extends Serializable {
       val bits = sameBits(idx, i)
       var sim: Double = 0.0
       if (bits >= minBits && idx != i && (f == null || { sim = f(i, idx) ; sim >= minSim })) {
-        res += Sim(i, estimator.estimateSimilarity(bits), sim)
+        res += Sim(i, if (f != null) sim else estimator.estimateSimilarity(bits))
       }
       i += 1
     }
     res.iterator
   }
 
+  /*
   def allSimilarIndexes(minEst: Double, minSim: Double, f: SimFun): Iterator[(Int, Idxs)] = {
     val minBits = estimator.minSameBits(minEst)
 
@@ -303,6 +311,7 @@ trait Sketch[SketchArray] extends Serializable {
       j += 1
     }
   }
+  */
 
   protected abstract class Op { def apply(thisIdx: Int, thatIdx: Int, est: Double, sim: Double): Unit }
 
@@ -312,7 +321,7 @@ trait Sketch[SketchArray] extends Serializable {
   protected def indexesToSims(idx: Int, simIdxs: Idxs, f: SimFun, sketch: SketchArray) =
     simIdxs.iterator.map { simIdx =>
       val est = estimator.estimateSimilarity(sketch, idx, sketch, simIdx)
-      Sim(simIdx, est, if (f == null) est else f(idx, simIdx))
+      Sim(simIdx, if (f != null) f(idx, simIdx) else est)
     }
 }
 
@@ -425,7 +434,7 @@ case class IntSketch[T](
   sketchArray: Array[Int],
   sketchers: Sketchers[T, Array[Int]],
   cfg: SketchCfg = SketchCfg()
-) extends Sketch[Array[Int]] with Sketching[Array[Int]] {
+) extends Sketch[T, Array[Int]] {
 
   val sketchLength = sketchers.sketchLength
   val itemsCount = sketchArray.length / sketchLength
@@ -471,7 +480,7 @@ case class BitSketch[T](
   sketchArray: Array[Long],
   sketchers: Sketchers[T, Array[Long]],
   cfg: SketchCfg = SketchCfg()
-) extends Sketch[Array[Long]] with Sketching[Array[Long]] {
+) extends Sketch[T, Array[Long]] {
 
   val sketchLength = sketchers.sketchLength
   val itemsCount = sketchArray.length * 64 / sketchLength

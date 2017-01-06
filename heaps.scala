@@ -3,7 +3,7 @@ package atrox
 import java.lang.Math
 import sketch.HashFunc
 
-object TopKFloatIntEstimate {
+object TopKIntIntEstimate {
   protected[atrox] val hf = Array.tabulate[HashFunc[Int]](256)(i => HashFunc.random(i * 4747))
 }
 
@@ -14,10 +14,10 @@ object TopKFloatIntEstimate {
  * - http://www.sebastiansylvan.com/post/robin-hood-hashing-should-be-your-default-hash-table-implementation/
  * - https://www.pvk.ca/Blog/more_numerical_experiments_in_hashing.html
  * */
-class TopKFloatIntEstimate(k: Int, hf: Array[HashFunc[Int]], numberOfFunctions: Int, oversample: Int) { self =>
+class TopKIntIntEstimate(k: Int, hf: Array[HashFunc[Int]], numberOfFunctions: Int, oversample: Int) { self =>
 
   def this(k: Int, numberOfFunctions: Int, oversample: Int = 0) =
-    this(k, TopKFloatIntEstimate.hf, numberOfFunctions, oversample)
+    this(k, TopKIntIntEstimate.hf, numberOfFunctions, oversample)
 
   val hashFunctions = numberOfFunctions
 
@@ -34,8 +34,8 @@ class TopKFloatIntEstimate(k: Int, hf: Array[HashFunc[Int]], numberOfFunctions: 
   private[this] var _size = 0
 
   private def f(h: Int, pair: Long) =
-    hf(h)(keyint(pair) ^ value(pair))
-    //TopKFloatIntEstimate.hf(h)(keyint(pair) ^ value(pair)) & (kpow - 1)
+    hf(h)(key(pair) ^ value(pair))
+    //TopKIntIntEstimate.hf(h)(keyint(pair) ^ value(pair)) & (kpow - 1)
 
   private def place(_pair: Long, h: Int): Unit = {
     var pair = _pair
@@ -66,7 +66,7 @@ class TopKFloatIntEstimate(k: Int, hf: Array[HashFunc[Int]], numberOfFunctions: 
     }
   }
 
-  def keyThreshold  = if (min == Long.MinValue) Float.MinValue else key(min)
+  def keyThreshold  = if (min == Long.MinValue) Int.MinValue else key(min)
 
   def size = _size // Math.min(_size, k)
 
@@ -79,17 +79,15 @@ class TopKFloatIntEstimate(k: Int, hf: Array[HashFunc[Int]], numberOfFunctions: 
     min
   }
 
-  def insert(key: Float, value: Int): Unit = {
+  def add(key: Int, value: Int): Unit = {
     val pair = pack(key, value)
     if (pair == Long.MinValue) throw new IllegalArgumentException()
     if (pair > min) place(pair, hashFunctions)
   }
 
-  def += (key: Float, value: Int) = insert(key, value)
-
-  def ++= (tk: TopKFloatIntEstimate) {
+  def addAll(tk: TopKIntIntEstimate) {
     val cur = tk.cursor
-    while (cur.moveNext) { insert(cur.key, cur.value) }
+    while (cur.moveNext) { add(cur.key, cur.value) }
   }
 
   def drainToArray(): Array[Int] = {
@@ -108,20 +106,20 @@ class TopKFloatIntEstimate(k: Int, hf: Array[HashFunc[Int]], numberOfFunctions: 
 
   def cursor = rawCursor
 
-  def rawCursor = new Cursor2[Float, Int] {
+  def rawCursor = new Cursor2[Int, Int] {
     private var pos = -1
     def moveNext() = { do { pos += 1 } while (pos < arr.length && arr(pos) == Long.MinValue) ; pos < arr.length }
     def key = self.key(arr(pos))
     def value = self.value(arr(pos))
   }
 
-  private def pack(key: Float, value: Int) = Bits.packSortable(key, value)
-  private def keyint(pair: Long): Int   = Bits.unpackIntHi(pair)
-  private def key   (pair: Long): Float = Bits.unpackSortableFloatHi(pair)
-  private def value (pair: Long): Int   = Bits.unpackIntLo(pair)
+  private def pack(key: Int, value: Int) = Bits.pack(key, value)
+  private def key  (pair: Long): Int     = Bits.unpackIntHi(pair)
+  private def value(pair: Long): Int     = Bits.unpackIntLo(pair)
 }
 
 
+/*
 class BruteForceTopKFloatInt(k: Int) { self =>
   val arr = new Array[Long](k) // sorted from smallest to biggest value
   java.util.Arrays.fill(arr, Long.MinValue)
@@ -192,22 +190,22 @@ class BruteForceTopKFloatInt(k: Int) { self =>
   }
 
   private def pack(key: Float, value: Int) = Bits.packSortable(key, value)
-  private def keyint(pair: Long): Int   = Bits.unpackIntHi(pair)
   private def key   (pair: Long): Float = Bits.unpackSortableFloatHi(pair)
   private def value (pair: Long): Int   = Bits.unpackIntLo(pair)
 }
+*/
 
 
-class TopKFloatInt(k: Int, distinct: Boolean = false) extends BaseMinFloatIntHeap(k) {
+class TopKIntInt(k: Int, distinct: Boolean = false) extends BaseMinIntIntHeap(k) {
 //  private var valueSet: IntSet = if (distinct) new IntSet() else null
-  protected var min = Float.NegativeInfinity
+  protected var min = Int.MinValue
 
   /** returns value that was deleted or Int.MinValue */
-  def insert(key: Float, value: Int): Unit = {
+  def add(key: Int, value: Int): Unit = {
     if (size < k) {
       if (!distinct || !_containsValue(value)) {
-        _insertFloat(key, value)
-        min = _minKeyFloat
+        _insert(key, value)
+        min = _minKey
 //        if (distinct) {
 //          valueSet += value
 //        }
@@ -215,8 +213,8 @@ class TopKFloatInt(k: Int, distinct: Boolean = false) extends BaseMinFloatIntHea
 
     } else if (key > min) {
       if (!distinct || !_containsValue(value)) {
-        _deleteMinAndInsertFloat(key, value)
-        min = _minKeyFloat
+        _deleteMinAndInsert(key, value)
+        min = _minKey
 //        if (distinct) {
 //          valueSet -= _minValue
 //          valueSet += value
@@ -239,15 +237,13 @@ class TopKFloatInt(k: Int, distinct: Boolean = false) extends BaseMinFloatIntHea
     false
   }
 
-  def += (key: Float, value: Int) = insert(key, value)
-
-  def ++= (tk: TopKFloatInt): Unit = {
+  def addAll(tk: TopKIntInt): Unit = {
     // backwrds iterations because that way heap is filled by big values and
     // rest is filered out by `key > min` condition in the insert method
     var i = tk.top - 1; while (i >= 1) { // TODO why >= 1 ?
-      val key = Bits.sortableIntToFloat(high(tk.arr(i)))
+      val key = high(tk.arr(i))
       val value = low(tk.arr(i))
-      insert(key, value)
+      add(key, value)
       i -= 1
     }
   }
@@ -258,22 +254,22 @@ class TopKFloatInt(k: Int, distinct: Boolean = false) extends BaseMinFloatIntHea
     val res = new Array[Int](size)
     var i = res.length-1 ; while (i >= 0) {
       res(i) = _minValue
-      deleteMin()
+      _deleteMin()
       i -= 1
     }
     res
   }
 
   def head: Int = _minValue
-  def minKey: Float = _minKeyFloat
+  def minKey: Int = _minKey
   def minValue: Int = _minValue
 
-  override def toString = arr.drop(1).take(size).map(l => (Bits.sortableIntToFloat(high(l)), low(l))).mkString("TopKFloatInt(", ",", ")")
+  override def toString = arr.drop(1).take(size).map(l => (high(l), low(l))).mkString("TopKIntInt(", ",", ")")
 
-  def cursor = new Cursor2[Float, Int] {
+  def cursor = new Cursor2[Int, Int] {
     private var pos = -1
     def moveNext() = { pos += 1 ; pos < top }
-    def key = Bits.sortableIntToFloat(high(arr(pos)))
+    def key = high(arr(pos))
     def value = low(arr(pos))
   }
 
@@ -281,24 +277,11 @@ class TopKFloatInt(k: Int, distinct: Boolean = false) extends BaseMinFloatIntHea
 }
 
 
-class MinFloatIntHeap(capacity: Int) extends BaseMinFloatIntHeap(capacity) {
-  def insert(key: Float, value: Int) = _insertFloat(key, value)
-  def minKey: Float = _minKeyFloat
-  def minValue: Int = _minValue
-  def deleteMinAndInsert(key: Float, value: Int) = _deleteMinAndInsertFloat(key, value)
-}
-
-abstract class BaseMinFloatIntHeap(capacity: Int) extends BaseMinIntIntHeap(capacity) {
-  protected def _insertFloat(key: Float, value: Int) = _insert(Bits.floatToSortableInt(key), value)
-  protected def _minKeyFloat: Float = Bits.sortableIntToFloat(_minKey)
-  protected def _deleteMinAndInsertFloat(key: Float, value: Int) = _deleteMinAndInsert(Bits.floatToSortableInt(key), value)
-}
-
-
 class MinIntIntHeap(capacity: Int) extends BaseMinIntIntHeap(capacity) {
   def insert(key: Int, value: Int) = _insert(key, value)
   def minKey: Int = _minKey
   def minValue: Int = _minValue
+  def deleteMin(): Unit = _deleteMin()
   def deleteMinAndInsert(key: Int, value: Int) = _deleteMinAndInsert(key, value)
 }
 
@@ -354,7 +337,7 @@ abstract class BaseMinIntIntHeap protected (protected val arr: Array[Long], val 
     low(arr(0))
   }
 
-  def deleteMin(): Unit = {
+  protected def _deleteMin(): Unit = {
     if (top == 0) throw new NoSuchElementException("underflow")
     //val minKey = high(arr(0))
     top -= 1
@@ -429,17 +412,3 @@ abstract class BaseMinIntIntHeap protected (protected val arr: Array[Long], val 
     }
 
 }
-
-
-
-/*
-class NakedHeaps(val capacity: Int, heaps: Int) {
-  val arr = new Array[Long](heaps * (capacity+1))
-
-  def getCell(idx: Int, pos: Int): Long
-  def setCell(idx: Int, pos: Int, value: Long): Unit
-
-  def top(idx: Int): Int = getCell(idx, 0)
-  def setTop(idx: Int, top: Int): Unit = setCell(idx, 0, top)
-}
-*/
