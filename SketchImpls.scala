@@ -1,7 +1,7 @@
 package atrox.sketch
 
 import scala.language.postfixOps
-import breeze.linalg.{ SparseVector, DenseVector, DenseMatrix, BitVector, normalize, Vector => bVector, operators }
+import breeze.linalg.{ SparseVector, DenseVector, DenseMatrix, BitVector, normalize, Vector => bVector, operators, norm }
 import breeze.stats.distributions.Rand
 import atrox.fastSparse
 
@@ -108,38 +108,69 @@ object MinHash {
 
 
 
+/** Estimates cosine of the angle between two vectors. */
 object RandomHyperplanes {
-  import scala.language.reflectiveCalls
-
-  def apply[V](n: Int, vectorLength: Int)(implicit ev: CanDot[V]): BitSketchers[V] =
-    Sketchers(n, (i: Int) => mkSketcher(vectorLength, i * 1000), Estimator(n), None)
+  def apply[T](n: Int, vectorLength: Int, normalized: Boolean = false)(implicit ev: CanDot[T]): BitSketchers[T] = {
+    Sketchers(n, (i: Int) => mkSketcher(vectorLength, i * 1000), Estimator(n), Some(mkRank(ev, normalized)))
+  }
 
 //  def apply(rowMatrix: DenseMatrix[Double], n: Int): BitSketch[DenseVector[Double]] = ???
 //    apply(0 until rowMatrix.rows map { r => rowMatrix(r, ::).t }, n)(CanDotDouble)
 
 
+  private def mkRank[InVec](ev: CanDot[InVec], norm: Boolean) =
+    if (norm) (items: IndexedSeq[InVec]) => SimFun[InVec]((a, b) => ev.dotInVec(a, b), items)
+    else      (items: IndexedSeq[InVec]) => SimFun[InVec]((a, b) => ev.dotInVec(a, b) / (ev.normInVec(a) * ev.normInVec(b)), items)
+
   trait CanDot[InVec] {
     type RndVec
     def makeRandomHyperplane(length: Int, seed: Int): RndVec
-    def dot(a: InVec, b: RndVec): Double
+    def dotRndVec(a: InVec, b: RndVec): Double
+    def dotInVec(a: InVec, b: InVec): Double
+    def normRndVec(a: RndVec): Double
+    def normInVec(a: InVec): Double
   }
 
-  implicit def CanDotFloat[V](implicit dotf: operators.OpMulInner.Impl2[V, DenseVector[Float], Float]) = new CanDot[V] {
+  type Mul[A, B, C] = operators.OpMulInner.Impl2[A, B, C]
+  type Norm[A, B, C] = norm.Impl2[A, B, C]
+
+  implicit def CanDotFloat[T](implicit
+      dotf1: Mul[T, DenseVector[Float], Float],
+      dotf2: Mul[T, T, Float],
+      normf1: Norm[DenseVector[Float], Double, Double],
+      normf2: Norm[T, Double, Double]
+    ) = new CanDot[T] {
+
     type RndVec = DenseVector[Float]
+
     def makeRandomHyperplane(length: Int, seed: Int): RndVec = mkRandomHyperplane(length, seed) mapValues (_.toFloat)
-    def dot(a: V, b: DenseVector[Float]): Double = dotf(a, b).toDouble
+    def dotRndVec(a: T, b: RndVec): Double = dotf1(a, b).toDouble
+    def dotInVec(a: T, b: T): Double = dotf2(a, b).toDouble
+    def normRndVec(a: RndVec): Double = normf1(a, 2)
+    def normInVec(a: T): Double = normf2(a, 2)
+
   }
 
-  implicit def CanDotDouble[V](implicit dotf: operators.OpMulInner.Impl2[V, DenseVector[Double], Double]) = new CanDot[V] {
+
+  implicit def CanDotDouble[T](implicit
+      dotf1: Mul[T, DenseVector[Double], Double],
+      dotf2: Mul[T, T, Double],
+      normf1: Norm[DenseVector[Double], Double, Double],
+      normf2: Norm[T, Double, Double]
+    ) = new CanDot[T] {
+
     type RndVec = DenseVector[Double]
+
     def makeRandomHyperplane(length: Int, seed: Int): RndVec = mkRandomHyperplane(length, seed)
-    def dot(a: V, b: DenseVector[Double]): Double = dotf(a, b)
+    def dotRndVec(a: T, b: RndVec): Double = dotf1(a, b)
+    def dotInVec(a: T, b: T): Double = dotf2(a, b)
+    def normRndVec(a: RndVec): Double = normf1(a, 2)
+    def normInVec(a: T): Double = normf2(a, 2)
   }
 
-
-  private def mkSketcher[V](length: Int, seed: Int)(implicit ev: CanDot[V]): BitSketcher[V] = new BitSketcher[V] {
+  private def mkSketcher[T](length: Int, seed: Int)(implicit ev: CanDot[T]): BitSketcher[T] = new BitSketcher[T] {
     private val rand = ev.makeRandomHyperplane(length, seed)
-    def apply(item: V) = ev.dot(item, rand) > 0.0
+    def apply(item: T) = ev.dotRndVec(item, rand) > 0.0
   }
 
   private def mkRandomHyperplane(length: Int, seed: Int): DenseVector[Double] = {
