@@ -186,12 +186,17 @@ object LSH {
     case SwitchBit => buildBitLshTable(sk.asInstanceOf[Sketching[T, Array[Long]]], cfg)
   }
 
+  def apply[T, SketchArray: Switch](items: IndexedSeq[T], sk: Sketchers[T, SketchArray], cfg: LSHBuildCfg): LSHObj[T, T, SketchArray, IntArrayLSHTable[SketchArray]] = {
+    require(sk.rank.nonEmpty, "No default rank object. It must be passed explicitly.")
+    apply(SketchingOf(items, sk), sk.rank.get(items), cfg)
+  }
+
+  def apply[T, S, SketchArray: Switch](items: IndexedSeq[T], sk: Sketchers[T, SketchArray], rank: Rank[T, S], cfg: LSHBuildCfg): LSHObj[T, S, SketchArray, IntArrayLSHTable[SketchArray]] =
+    apply(SketchingOf(items, sk), rank, cfg)
 
   def apply[T, S, SketchArray: Switch](sk: Sketching[T, SketchArray], rank: Rank[T, S], cfg: LSHBuildCfg): LSHObj[T, S, SketchArray, IntArrayLSHTable[SketchArray]] =
     LSHObj(mkTlb(sk, cfg), SketchingQuery(sk, sk.sketchers), rank)
 
-  def apply[T, S, SketchArray: Switch](items: IndexedSeq[T], sk: Sketchers[T, SketchArray], rank: Rank[T, S], cfg: LSHBuildCfg): LSHObj[T, S, SketchArray, IntArrayLSHTable[SketchArray]] =
-    apply(SketchingOf(items, sk), rank, cfg)
 
 
   def estimating[T, SketchArray: Switch](sk: Sketch[T, SketchArray], cfg: LSHBuildCfg): LSHObj[T, (SketchArray, Int), SketchArray, IntArrayLSHTable[SketchArray]] =
