@@ -8,23 +8,23 @@ import breeze.stats.distributions.Rand
 
 object MinHash {
 
-  def apply[T](hashFunctions: Int)(implicit mk: ((HashFunc[Int], Any => Int)) => WeightedMinHasher[T]): IntSketchers[T] =
+  def apply[T](hashFunctions: Int)(implicit mk: MinHashImpl[T, Any]): IntSketchers[T] =
     weighted(hashFunctions, (a: Any) => 1)
 
   /** based on https://www.sumologic.com/2015/10/22/rapid-similarity-search-with-weighted-min-hash/ */
-  def weighted[T, El](hashFunctions: Int, weights: El => Int)(implicit mk: ((HashFunc[Int], El => Int)) => WeightedMinHasher[T]): IntSketchers[T] =
-    Sketchers(hashFunctions, (i: Int) => mk(HashFunc.random(i*1000), weights), Estimator(hashFunctions))
+  def weighted[T, El](hashFunctions: Int, weights: El => Int)(implicit mk: MinHashImpl[T, El]): IntSketchers[T] =
+    Sketchers(hashFunctions, (i: Int) => mk(HashFunc.random(i*1000), weights), Estimator(hashFunctions), None)
 
   /** MinHash that uses only one bit. It's much faster than traditional MinHash
     * but it seems it's less precise.
     * As of right now it's not really suitable for LSH, because most elements
     * are hashed into few buckets. Investigation pending.
     * https://www.endgame.com/blog/minhash-vs-bitwise-set-hashing-jaccard-similarity-showdown */
-  def singleBit[T](hashFunctions: Int)(implicit mk: ((HashFunc[Int], Any => Int)) => WeightedMinHasher[T]): BitSketchers[T] =
+  def singleBit[T](hashFunctions: Int)(implicit mk: MinHashImpl[T, Any]): BitSketchers[T] =
     singleBitWeighted(hashFunctions, (a: Any) => 1)
 
-  def singleBitWeighted[T, El](hashFunctions: Int, weights: El => Int)(implicit mk: ((HashFunc[Int], El => Int)) => WeightedMinHasher[T]): BitSketchers[T] =
-    Sketchers(hashFunctions, (i: Int) => SingleBitMinHasher(mk(HashFunc.random(i*1000), weights)), SingleBitEstimator(hashFunctions))
+  def singleBitWeighted[T, El](hashFunctions: Int, weights: El => Int)(implicit mk: MinHashImpl[T, El]): BitSketchers[T] =
+    Sketchers(hashFunctions, (i: Int) => SingleBitMinHasher(mk(HashFunc.random(i*1000), weights)), SingleBitEstimator(hashFunctions), None)
 
 
 
@@ -36,36 +36,48 @@ object MinHash {
     def apply(x: T): Boolean = (mh(x) & 1) != 0
   }
 
-  implicit class IntArrayMinHasher(fw: (HashFunc[Int], Int => Int)) extends WeightedMinHasher[Array[Int]] {
-    val (f, weights) = fw
-    def apply(set: Array[Int]): Int = {
-      var min = Int.MaxValue
-      var j = 0 ; while (j < set.length) {
-        var h = set(j)
-        var i = 0 ; while (i < weights(j)) {
-          h = f(h)
-          min = math.min(min, h)
-          i += 1
-        }
-        j += 1
-      }
-      min
-    }
+
+  trait MinHashImpl[T, +El] {
+    def apply(hf: HashFunc[Int], weights: El => Int): WeightedMinHasher[T]
   }
 
-  implicit class GeneralMinHasher[T](fw: (HashFunc[Int], T => Int)) extends WeightedMinHasher[Traversable[T]] {
-    val (f, weights) = fw
-    def apply(set: Traversable[T]): Int = {
-      var min = Int.MaxValue
-      for (el <- set) {
-        var h = el.hashCode
-        for (_ <- 0 until weights(el)) {
-          h = f(h)
-          min = math.min(min, h)
-        }
+  implicit val IntArrayMinHashImpl = new MinHashImpl[Array[Int], Int] {
+    def apply(hf: HashFunc[Int], weights: Int => Int): WeightedMinHasher[Array[Int]] =
+      new WeightedMinHasher[Array[Int]] { def apply(set: Array[Int]) = minhashArr(set, hf, weights) }
+  }
+
+  (hf, weights) => { (set) => minhashArr(set, hf, weights) }
+
+  implicit def GeneralMinHashImpl[El] = new MinHashImpl[Traversable[El], El] {
+    def apply(hf: HashFunc[Int], weights: El => Int): WeightedMinHasher[Traversable[El]] =
+      new WeightedMinHasher[Traversable[El]] { def apply(set: Traversable[El]): Int = minhashTrav(set, hf, weights) }
+  }
+
+
+  private def minhashArr(set: Array[Int], f: HashFunc[Int], weights: Int => Int): Int = {
+    var min = Int.MaxValue
+    var j = 0 ; while (j < set.length) {
+      var h = set(j)
+      var i = 0 ; while (i < weights(j)) {
+        h = f(h)
+        min = math.min(min, h)
+        i += 1
       }
-      min
+      j += 1
     }
+    min
+  }
+
+  private def minhashTrav[El](set: Traversable[El], f: HashFunc[Int], weights: El => Int): Int = {
+    var min = Int.MaxValue
+    for (el <- set) {
+      var h = el.hashCode
+      for (_ <- 0 until weights(el)) {
+        h = f(h)
+        min = math.min(min, h)
+      }
+    }
+    min
   }
 
 
@@ -95,7 +107,7 @@ object RandomHyperplanes {
   import scala.language.reflectiveCalls
 
   def apply[V](n: Int, vectorLength: Int)(implicit ev: CanDot[V]): BitSketchers[V] =
-    Sketchers(n, (i: Int) => mkSketcher(vectorLength, i * 1000), Estimator(n))
+    Sketchers(n, (i: Int) => mkSketcher(vectorLength, i * 1000), Estimator(n), None)
 
 //  def apply(rowMatrix: DenseMatrix[Double], n: Int): BitSketch[DenseVector[Double]] = ???
 //    apply(0 until rowMatrix.rows map { r => rowMatrix(r, ::).t }, n)(CanDotDouble)
@@ -149,7 +161,7 @@ object RandomHyperplanes {
 object RandomProjections {
 
   def apply[V](projections: Int, bucketSize: Double, vectorLength: Int): IntSketchers[bVector[Double]] =
-    Sketchers(projections, (i: Int) => mkSketcher(vectorLength, i * 1000, bucketSize), Estimator(projections))
+    Sketchers(projections, (i: Int) => mkSketcher(vectorLength, i * 1000, bucketSize), Estimator(projections), None)
 
 
   private def mkSketcher(vectorLength: Int, seed: Int, bucketSize: Double) =
@@ -362,6 +374,7 @@ object HammingDistance {
       new BitSketchers[Any] { self =>
         val sketchLength = bits
         val estimator = Estimator(bits)
+        val rank = None
         def getSketchFragment(item: Any, from: Int, to: Int) = sys.error("this should not happen")
       }
     )
@@ -385,6 +398,7 @@ object SimHash {
     new BitSketchers[Array[T]] {
       val sketchLength = 64
       val estimator = HammingDistance.Estimator(64)
+      val rank = None
       def getSketchFragment(item: Array[T], from: Int, to: Int): Array[Long] = {
         require(from == 0 && to == 64)
         Array[Long](doSimHash64(item, f))
