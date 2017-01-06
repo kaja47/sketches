@@ -38,7 +38,7 @@ trait BitSketcher[-T] extends (T => Boolean) {
 trait Sketchers[T, SketchArray] { self =>
   def sketchLength: Int
   def estimator: Estimator[SketchArray]
-  def rank: Option[Rank[T, T]]
+  def rank: Option[IndexedSeq[T] => Rank[T, T]]
 
   /** @param itemIdx index of source item
     * @param from index of first sketch component (inclusive)
@@ -58,11 +58,11 @@ trait Sketchers[T, SketchArray] { self =>
 }
 
 object Sketchers {
-  def apply[T](sketchers: Array[T => Int], estimator: IntEstimator, rank: Option[Rank[T, T]]) = IntSketchersOf(sketchers, estimator, rank)
-  def apply[T](n: Int, mk: Int => (T => Int), estimator: IntEstimator, rank: Option[Rank[T, T]]) = IntSketchersOf(Array.tabulate(n)(mk), estimator, rank)
+  def apply[T](sketchers: Array[T => Int], estimator: IntEstimator, rank: Option[IndexedSeq[T] => Rank[T, T]]) = IntSketchersOf(sketchers, estimator, rank)
+  def apply[T](n: Int, mk: Int => (T => Int), estimator: IntEstimator, rank: Option[IndexedSeq[T] => Rank[T, T]]) = IntSketchersOf(Array.tabulate(n)(mk), estimator, rank)
 
-  def apply[T](sketchers: Array[T => Boolean], estimator: BitEstimator, rank: Option[Rank[T, T]]) = BitSketchersOf(sketchers, estimator, rank)
-  def apply[T](n: Int, mk: Int => T => Boolean, estimator: BitEstimator, rank: Option[Rank[T, T]]) = BitSketchersOf(Array.tabulate(n)(mk), estimator, rank)
+  def apply[T](sketchers: Array[T => Boolean], estimator: BitEstimator, rank: Option[IndexedSeq[T] => Rank[T, T]]) = BitSketchersOf(sketchers, estimator, rank)
+  def apply[T](n: Int, mk: Int => T => Boolean, estimator: BitEstimator, rank: Option[IndexedSeq[T] => Rank[T, T]]) = BitSketchersOf(Array.tabulate(n)(mk), estimator, rank)
 }
 
 trait IntSketchers[T] extends Sketchers[T, Array[Int]]
@@ -71,7 +71,7 @@ trait BitSketchers[T] extends Sketchers[T, Array[Long]]
 case class IntSketchersOf[T](
   sketchers: Array[T => Int],
   estimator: IntEstimator,
-  rank: Option[Rank[T, T]]
+  rank: Option[IndexedSeq[T] => Rank[T, T]]
 ) extends IntSketchers[T] {
 
   val sketchLength = sketchers.length
@@ -93,7 +93,7 @@ case class IntSketchersOf[T](
 case class BitSketchersOf[T](
   sketchers: Array[T => Boolean],
   estimator: BitEstimator,
-  rank: Option[Rank[T, T]]
+  rank: Option[IndexedSeq[T] => Rank[T, T]]
 ) extends BitSketchers[T] {
 
   val sketchLength = sketchers.length

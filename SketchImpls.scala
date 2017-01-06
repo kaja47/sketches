@@ -3,6 +3,7 @@ package atrox.sketch
 import scala.language.postfixOps
 import breeze.linalg.{ SparseVector, DenseVector, DenseMatrix, BitVector, normalize, Vector => bVector, operators }
 import breeze.stats.distributions.Rand
+import atrox.fastSparse
 
 
 
@@ -13,7 +14,7 @@ object MinHash {
 
   /** based on https://www.sumologic.com/2015/10/22/rapid-similarity-search-with-weighted-min-hash/ */
   def weighted[T, El](hashFunctions: Int, weights: El => Int)(implicit mk: MinHashImpl[T, El]): IntSketchers[T] =
-    Sketchers(hashFunctions, (i: Int) => mk(HashFunc.random(i*1000), weights), Estimator(hashFunctions), None)
+    Sketchers(hashFunctions, (i: Int) => mk(HashFunc.random(i*1000), weights), Estimator(hashFunctions), Some(mk.mkRank))
 
   /** MinHash that uses only one bit. It's much faster than traditional MinHash
     * but it seems it's less precise.
@@ -24,21 +25,24 @@ object MinHash {
     singleBitWeighted(hashFunctions, (a: Any) => 1)
 
   def singleBitWeighted[T, El](hashFunctions: Int, weights: El => Int)(implicit mk: MinHashImpl[T, El]): BitSketchers[T] =
-    Sketchers(hashFunctions, (i: Int) => onebit(mk(HashFunc.random(i*1000), weights)), SingleBitEstimator(hashFunctions), None)
+    Sketchers(hashFunctions, (i: Int) => onebit(mk(HashFunc.random(i*1000), weights)), SingleBitEstimator(hashFunctions), Some(mk.mkRank))
 
   private def onebit[T](f: T => Int) = (t: T) => (f(t) & 1) != 0
 
 
   trait MinHashImpl[T, +El] {
     def apply(hf: HashFunc[Int], weights: El => Int): (T => Int)
+    def mkRank: IndexedSeq[T] => Rank[T, T]
   }
 
   implicit val IntArrayMinHashImpl = new MinHashImpl[Array[Int], Int] {
     def apply(hf: HashFunc[Int], weights: Int => Int) = (set: Array[Int]) => minhashArr(set, hf, weights)
+    def mkRank = (items: IndexedSeq[Array[Int]]) => SimFun[Array[Int]](fastSparse.jaccardSimilarity, items)
   }
 
-  implicit def GeneralMinHashImpl[El] = new MinHashImpl[Traversable[El], El] {
-    def apply(hf: HashFunc[Int], weights: El => Int) = (set: Traversable[El])=> minhashTrav(set, hf, weights)
+  implicit def GeneralMinHashImpl[El] = new MinHashImpl[Set[El], El] {
+    def apply(hf: HashFunc[Int], weights: El => Int) = (set: Set[El])=> minhashTrav(set, hf, weights)
+    def mkRank = (items: IndexedSeq[Set[El]]) => SimFun[Set[El]](jacc, items)
   }
 
 
@@ -56,7 +60,7 @@ object MinHash {
     min
   }
 
-  private def minhashTrav[El](set: Traversable[El], f: HashFunc[Int], weights: El => Int): Int = {
+  private def minhashTrav[El](set: Set[El], f: HashFunc[Int], weights: El => Int): Int = {
     var min = Int.MaxValue
     for (el <- set) {
       var h = el.hashCode
@@ -66,6 +70,19 @@ object MinHash {
       }
     }
     min
+  }
+
+  protected def jacc[El](a: Set[El], b: Set[El]) = {
+    val small = if (a.size < b.size) a else b
+    val large = if (a.size < b.size) b else a
+
+    var in = 0
+    for (el <- small) {
+      if (large.contains(el)) in += 1
+    }
+
+    val un = small.size + large.size - in
+    in.toDouble / un
   }
 
 
