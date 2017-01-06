@@ -148,9 +148,7 @@ object RandomHyperplanes {
     def dotInVec(a: T, b: T): Double = dotf2(a, b).toDouble
     def normRndVec(a: RndVec): Double = normf1(a, 2)
     def normInVec(a: T): Double = normf2(a, 2)
-
   }
-
 
   implicit def CanDotDouble[T](implicit
       dotf1: Mul[T, DenseVector[Double], Double],
@@ -167,6 +165,44 @@ object RandomHyperplanes {
     def normRndVec(a: RndVec): Double = normf1(a, 2)
     def normInVec(a: T): Double = normf2(a, 2)
   }
+
+  implicit def CanDotSparseDouble = new CanDot[SparseVector[Double]] {
+    trait RndVec {
+      def apply(i: Int): Double
+      def norm: Double
+    }
+
+    def makeRandomHyperplane(length: Int, seed: Int) = {
+      val f = HashFunc.random(seed, 16)
+
+      new RndVec {
+        def apply(i: Int): Double = {
+          val j = i+1337
+          val bit = (f(j/16) >> (j%16)) & 1
+          if (bit == 1) 1.0 else -1.0
+        }
+        val norm: Double = math.sqrt(length)
+      }
+    }
+
+    def dotRndVec(a: SparseVector[Double], b: RndVec): Double = {
+      var d = 0.0
+      var offset = 0
+      while (offset < a.activeSize) {
+        val i = a.indexAt(offset)
+        val v = a.valueAt(offset)
+        d += v * b(i)
+        offset += 1
+      }
+      d
+    }
+
+    def dotInVec(a: SparseVector[Double], b: SparseVector[Double]) = a dot b
+
+    def normInVec(a: SparseVector[Double]): Double = norm(a, 2)
+    def normRndVec(a: RndVec): Double = a.norm
+  }
+
 
   private def mkSketcher[T](length: Int, seed: Int)(implicit ev: CanDot[T]): BitSketcher[T] = new BitSketcher[T] {
     private val rand = ev.makeRandomHyperplane(length, seed)
@@ -192,8 +228,7 @@ object RandomHyperplanes {
 
 
 
-
-
+/** Estimates distance */
 object RandomProjections {
 
   def apply[V](projections: Int, bucketSize: Double, vectorLength: Int): IntSketchers[bVector[Double]] =
