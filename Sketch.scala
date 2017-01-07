@@ -47,14 +47,6 @@ trait Sketchers[T, SketchArray] { self =>
   def getSketchFragment(item: T, from: Int, to: Int): SketchArray
   def getSketchFragment(item: T): SketchArray =
     getSketchFragment(item, 0, sketchLength)
-
-  def slice(_from: Int, _to: Int): Sketchers[T, SketchArray] = new Sketchers[T, SketchArray] {
-    val sketchLength = _to - _from
-    val estimator = self.estimator
-    val rank = self.rank
-    def getSketchFragment(item: T, from: Int, to: Int): SketchArray =
-      self.getSketchFragment(item, _from + from, _from + to)
-  }
 }
 
 object Sketchers {
@@ -131,15 +123,6 @@ trait Sketching[T, SketchArray] { self =>
   def getSketchFragment(itemIdx: Int, from: Int, to: Int): SketchArray
   def getSketchFragment(itemIdx: Int): SketchArray =
     getSketchFragment(itemIdx, 0, sketchLength)
-
-  def slice(_from: Int, _to: Int): Sketching[T, SketchArray] = new Sketching[T, SketchArray] {
-    val itemsCount = self.itemsCount
-    val sketchLength = _to - _from
-    val estimator = self.estimator
-    val sketchers = self.sketchers
-    def getSketchFragment(itemIdx: Int, from: Int, to: Int): SketchArray =
-      self.getSketchFragment(itemIdx, _from + from, _from + to)
-  }
 }
 
 case class SketchingOf[T, SketchArray](
@@ -153,9 +136,6 @@ case class SketchingOf[T, SketchArray](
 
   def getSketchFragment(itemIdx: Int, from: Int, to: Int): SketchArray =
     sketchers.getSketchFragment(items(itemIdx), from, to)
-
-  override def slice(_from: Int, _to: Int) = copy(sketchers = sketchers.slice(_from, _to))
-
 }
 
 
