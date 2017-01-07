@@ -183,10 +183,9 @@ trait Sketch[T, SketchArray] extends Serializable with Sketching[T, SketchArray]
 
   def estimator: Estimator[SketchArray]
   def cfg: SketchCfg
-  def sameBits(idxA: Int, idxB: Int): Int
+  def sameBits(idxA: Int, idxB: Int): Int = estimator.sameBits(sketchArray, idxA, sketchArray, idxB)
   def estimateSimilarity(idxA: Int, idxB: Int): Double = estimator.estimateSimilarity(sameBits(idxA, idxB))
   def minSameBits(sim: Double): Int = estimator.minSameBits(sim)
-  def empty: Sketch[T, SketchArray]
 
   def similarIndexes(idx: Int, minEst: Double): Idxs = similarIndexes(idx, minEst, 0.0, null)
   def similarIndexes(idx: Int, minEst: Double, minSim: Double, f: SimFun): Idxs = {
@@ -430,20 +429,12 @@ case class IntSketch[T](
 
   def withConfig(_cfg: SketchCfg): IntSketch[T] = copy(cfg = _cfg)
 
-  def sameBits(idxA: Int, idxB: Int): Int =
-    estimator.sameBits(sketchArray, idxA, sketchArray, idxB)
-
-  def empty = copy(sketchArray = null)
-
   def getSketchFragment(itemIdx: Int, from: Int, to: Int): Array[Int] =
     Arrays.copyOfRange(sketchArray, itemIdx * sketchLength + from, itemIdx * sketchLength + to)
 
   def sketeches: Iterator[Array[Int]] =
     Iterator.tabulate(itemsCount) { i => getSketchFragment(i) }
-
 }
-
-
 
 
 
@@ -460,7 +451,6 @@ object BitSketch {
 
   def apply[T](items: IndexedSeq[T], sk: BitSketchers[T]): BitSketch[T] =
     BitSketch(makeSketchArray(sk, items), sk)
-
 }
 
 
@@ -476,11 +466,6 @@ case class BitSketch[T](
   val bitsPerSketch = sketchLength
 
   def withConfig(_cfg: SketchCfg): BitSketch[T] = copy(cfg = _cfg)
-
-  def sameBits(idxA: Int, idxB: Int): Int =
-    estimator.sameBits(sketchArray, idxA, sketchArray, idxB)
-
-  def empty = copy(sketchArray = null)
 
   def getSketchFragment(itemIdx: Int, from: Int, to: Int): Array[Long] =
     Bits.getBits(sketchArray, itemIdx * bitsPerSketch + from, itemIdx * bitsPerSketch + to)
