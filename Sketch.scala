@@ -336,22 +336,17 @@ trait Estimator[SketchArray] {
   def estimateSimilarity(sameBits: Int): Double
 
   def sameBits(arrA: SketchArray, idxA: Int, arrB: SketchArray, idxB: Int): Int
-  def estimateSimilarity(arrA: SketchArray, idxA: Int, arrB: SketchArray, idxB: Int): Double
+  def estimateSimilarity(arrA: SketchArray, idxA: Int, arrB: SketchArray, idxB: Int): Double =
+    estimateSimilarity(sameBits(arrA, idxA, arrB, idxB))
 }
 
 
 trait IntEstimator extends Estimator[Array[Int]] {
-  def sketchLength: Int
-
-  def minSameBits(sim: Double): Int
-  def estimateSimilarity(sameBits: Int): Double
-
   def sameBits(arrA: Array[Int], idxA: Int, arrB: Array[Int], idxB: Int) = {
     var a = idxA * sketchLength
     var b = idxB * sketchLength
     var same = 0
     val end = a + sketchLength
-
     while (a < end) {
       same += (if (arrA(a) == arrB(b)) 1 else 0)
       a += 1
@@ -359,17 +354,9 @@ trait IntEstimator extends Estimator[Array[Int]] {
     }
     same
   }
-
-  def estimateSimilarity(arrA: Array[Int], idxA: Int, arrB: Array[Int], idxB: Int): Double =
-    estimateSimilarity(sameBits(arrA, idxA, arrB, idxB))
 }
 
 trait BitEstimator extends Estimator[Array[Long]] {
-  def sketchLength: Int
-
-  def minSameBits(sim: Double): Int
-  def estimateSimilarity(sameBits: Int): Double
-
   def sameBits(arrA: Array[Long], idxA: Int, arrB: Array[Long], idxB: Int) = {
     val longsLen = (sketchLength+63) / 64 // assumes sketch is Long aligned
     val a = idxA * longsLen
@@ -382,9 +369,6 @@ trait BitEstimator extends Estimator[Array[Long]] {
     }
     same
   }
-
-  def estimateSimilarity(arrA: Array[Long], idxA: Int, arrB: Array[Long], idxB: Int): Double =
-    estimateSimilarity(sameBits(arrA, idxA, arrB, idxB))
 }
 
 
