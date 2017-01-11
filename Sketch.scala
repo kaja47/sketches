@@ -141,11 +141,11 @@ case class SketchingOf[T, SketchArray](
 
 
 object Sketch {
-  def apply[T](items: IndexedSeq[T], sk: IntSketchers[T]) = IntSketch(items, sk)
-  def apply[T](items: IndexedSeq[T], sk: BitSketchers[T]) = BitSketch(items, sk)
+  def apply[T](items: Seq[T], sk: IntSketchers[T]) = IntSketch(items, sk)
+  def apply[T](items: Seq[T], sk: BitSketchers[T]) = BitSketch(items, sk)
   def apply(items: Array[Long], sk: BitSketchers[Nothing]) = BitSketch[Nothing](items, sk)
 
-  def apply[T, SketchArray](items: IndexedSeq[T], sk: Sketchers[T, SketchArray]): Sketch[T, SketchArray] = sk match {
+  def apply[T, SketchArray](items: Seq[T], sk: Sketchers[T, SketchArray]): Sketch[T, SketchArray] = sk match {
     case sk: IntSketchers[T @unchecked] => IntSketch(items, sk)
     case sk: BitSketchers[T @unchecked] => BitSketch(items, sk)
   }
@@ -383,16 +383,16 @@ trait BitEstimator256 extends BitEstimator {
 
 
 object IntSketch {
-  def makeSketchArray[T](sk: IntSketchers[T], items: IndexedSeq[T]): Array[Int] = {
+  def makeSketchArray[T](sk: IntSketchers[T], items: Seq[T]): Array[Int] = {
     val sketchArray = new Array[Int](items.length * sk.sketchLength)
-    for (itemIdx <- 0 until items.length) {
-      val arr = sk.getSketchFragment(items(itemIdx))
+    for ((item, itemIdx) <- items.iterator.zipWithIndex) {
+      val arr = sk.getSketchFragment(item)
       System.arraycopy(arr, 0, sketchArray, itemIdx * sk.sketchLength, sk.sketchLength)
     }
     sketchArray
   }
 
-  def apply[T](items: IndexedSeq[T], sk: IntSketchers[T]): IntSketch[T] =
+  def apply[T](items: Seq[T], sk: IntSketchers[T]): IntSketch[T] =
     IntSketch(makeSketchArray(sk, items), sk)
 }
 
@@ -419,17 +419,17 @@ case class IntSketch[T](
 
 
 object BitSketch {
-  def makeSketchArray[T](sk: BitSketchers[T], items: IndexedSeq[T]): Array[Long] = {
+  def makeSketchArray[T](sk: BitSketchers[T], items: Seq[T]): Array[Long] = {
     val longsLen = (sk.sketchLength+63) / 64 // assumes sketch is Long aligned
     val sketchArray = new Array[Long](items.length * longsLen)
-    for (itemIdx <- 0 until items.length) {
-      val arr = sk.getSketchFragment(items(itemIdx))
+    for ((item, itemIdx) <- items.iterator.zipWithIndex) {
+      val arr = sk.getSketchFragment(item)
       System.arraycopy(arr, 0, sketchArray, itemIdx * longsLen, arr.length)
     }
     sketchArray
   }
 
-  def apply[T](items: IndexedSeq[T], sk: BitSketchers[T]): BitSketch[T] =
+  def apply[T](items: Seq[T], sk: BitSketchers[T]): BitSketch[T] =
     BitSketch(makeSketchArray(sk, items), sk)
 }
 
