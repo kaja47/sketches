@@ -51,8 +51,6 @@ case class LSHCfg(
 ) {
   require(parallelPartialResultSize > 0.0 && parallelPartialResultSize <= 1.0)
 
-  def accept(idxs: Array[Int]) = idxs != null && idxs.length <= maxBucketSize
-
   override def toString = s"""
     |LSHCfg(
     |  maxBucketSize = $maxBucketSize
@@ -408,10 +406,13 @@ abstract class LSH[Q, S] { self =>
 
   // =====
 
+  protected def accept(cfg: LSHCfg)(idxs: Array[Int]) = idxs != null && idxs.length <= cfg.maxBucketSize
+
+
   def _streamIndexes: Iterator[Idxs]
   def _candidateIndexes(skarr: SketchArray, skidx: Int): Array[Idxs]
 
-  def streamIndexes: Iterator[Idxs] = _streamIndexes filter cfg.accept
+  def streamIndexes: Iterator[Idxs] = _streamIndexes filter accept(cfg)
 
 
 
@@ -627,7 +628,7 @@ final case class LSHObj[Q, S, SkArr, Table <: LSHTable[SkArr]](
     table.rawStreamIndexes
 
   def _candidateIndexes(skarr: SkArr, skidx: Int): Array[Idxs] =
-    table.rawCandidateIndexes(skarr, skidx) filter { cfg.accept }
+    table.rawCandidateIndexes(skarr, skidx) filter { accept(cfg) }
 }
 
 
