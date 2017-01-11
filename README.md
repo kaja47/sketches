@@ -10,13 +10,10 @@ Basic use case is search for all similar items in a dataset.
 ```scala
 import atrox.sketch._
 
-val sets: Seq[Set[Int]] = loadMyData()
-
-val simFun = SimFun[Array[Int]]((a, b) => jaccardSimilarity(a, b), sets)
+val sets: IndexedSeq[Set[Int]] = loadMyData()
 
 val (bands, hashes) = LSH.pickHashesAndBands(threshold = 0.5, maxHashes = 64)
-val minhash = Sketch(sets, MinHash[Set[Int]](hashes))
-val lsh     = LSH(minhash, simFun, LSHBuildCfg(bands = bands))
+val lsh = LSH(sets, MinHash[Set[Int]](hashes), LSHBuildCfg(bands = bands))
 
 val cfg = LSHCfg(maxResults = 50)
 
@@ -48,8 +45,8 @@ lsh.withConfig(LSHCfg(
 And more query methods.
 
 ```scala
-lsh.similarItems(idx)
-lsh.similarIndexes(idx)
+lsh.similarItems(q)
+lsh.similarIndexes(q)
 lsh.allSimilarItems
 lsh.allSimilarIndexes
 ```
