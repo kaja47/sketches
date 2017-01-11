@@ -263,8 +263,6 @@ object LSH {
     res
   }
 
-  type SimFun = (Int, Int) => Double
-
 }
 
 
@@ -387,7 +385,6 @@ case class BlindRank[Q]() extends Rank[Q, Q] {
 abstract class LSH[Q, S] { self =>
   type SketchArray
   type Idxs = Array[Int]
-  type SimFun = LSH.SimFun
 
   def query: Query[Q, SketchArray]
   def rank: Rank[Q, S]
