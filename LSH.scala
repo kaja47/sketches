@@ -404,39 +404,52 @@ abstract class LSH[Q, S] { self =>
   }
 
 
-  // =====
 
   protected def accept(cfg: LSHCfg)(idxs: Array[Int]) = idxs != null && idxs.length <= cfg.maxBucketSize
 
-
-  def _streamIndexes: Iterator[Idxs]
-  def _candidateIndexes(skarr: SketchArray, skidx: Int): Array[Idxs]
-
-  def streamIndexes: Iterator[Idxs] = _streamIndexes filter accept(cfg)
-
-
-
-  def rawCandidateIndexes(q: Q): Array[Idxs] = {
-    val (skarr, skidx) = query.query(q)
-    _candidateIndexes(skarr, skidx)
-  }
-  def rawCandidateIndexes(idx: Int): Array[Idxs] = {
-    val (skarr, skidx) = query.query(idx)
-    _candidateIndexes(skarr, skidx)
+  abstract class QQ[Res] {
+    def apply(q: Q): Res = apply(q, self.cfg)
+    def apply(q: Q, cfg: LSHCfg): Res
+    def apply(idx: Int): Res = apply(idx, self.cfg)
+    def apply(idx: Int, cfg: LSHCfg): Res
   }
 
-  def candidateIndexes(q: Q): Idxs =
-    fastSparse.union(rawCandidateIndexes(q))
 
-  def similarIndexes(q: Q): Idxs = _similar(rawCandidateIndexes(q), rank.map(q)).result
-  def similarIndexes(idx: Int): Idxs = _similar(rawCandidateIndexes(idx), idx).result
 
-  def similarItems(q: Q): Iterator[Sim] = indexResultBuilderToSims(_similar(rawCandidateIndexes(q), rank.map(q)))
-  def similarItems(idx: Int): Iterator[Sim] = indexResultBuilderToSims(_similar(rawCandidateIndexes(idx), idx))
+  // raw = without any filtering, presented as is
+  def rawStreamIndexes: Iterator[Idxs]
+  def rawCandidateIndexes(skarr: SketchArray, skidx: Int): Array[Idxs]
 
-  protected def _similar(candidateIdxs: Array[Idxs], s: S): IndexResultBuilder = {
-    val candidates = selectCandidates(candidateIdxs)
-    val res = newIndexResultBuilder()
+  protected def rawCandidateIndexes(ss: (SketchArray, Int)): Array[Idxs] = {
+    val (skarr, skidx) = ss
+    rawCandidateIndexes(skarr, skidx)
+  }
+
+  def rawCandidateIndexes(q: Q): Array[Idxs]     = rawCandidateIndexes(query.query(q))
+  def rawCandidateIndexes(idx: Int): Array[Idxs] = rawCandidateIndexes(query.query(idx))
+
+
+
+  def streamIndexes: Iterator[Idxs] = rawStreamIndexes filter accept(cfg)
+
+  def candidateIndexes = new QQ[Idxs] {
+    def apply(q: Q, cfg: LSHCfg)     = fastSparse.union(rawCandidateIndexes(q) filter accept(cfg))
+    def apply(idx: Int, cfg: LSHCfg) = fastSparse.union(rawCandidateIndexes(idx) filter accept(cfg))
+  }
+
+  def similarIndexes = new QQ[Idxs] {
+    def apply(q: Q, cfg: LSHCfg)     = _similar(rawCandidateIndexes(q), rank.map(q), cfg).result
+    def apply(idx: Int, cfg: LSHCfg) = _similar(rawCandidateIndexes(idx), idx, cfg).result
+  }
+
+  def similarItems = new QQ[Iterator[Sim]] {
+    def apply(q: Q, cfg: LSHCfg)     = indexResultBuilderToSims(_similar(rawCandidateIndexes(q), rank.map(q), cfg))
+    def apply(idx: Int, cfg: LSHCfg) = indexResultBuilderToSims(_similar(rawCandidateIndexes(idx), idx, cfg))
+  }
+
+  protected def _similar(candidateIdxs: Array[Idxs], s: S, cfg: LSHCfg): IndexResultBuilder = {
+    val candidates = selectCandidates(candidateIdxs, cfg)
+    val res = newIndexResultBuilder(false, cfg.maxResults)
 
     var i = 0 ; while (i < candidates.length) {
       res += (candidates(i), rank.rank(s, candidates(i)))
@@ -446,9 +459,9 @@ abstract class LSH[Q, S] { self =>
     res
   }
 
-  protected def _similar(candidateIdxs: Array[Idxs], idx: Int): IndexResultBuilder = {
-    val candidates = selectCandidates(candidateIdxs)
-    val res = newIndexResultBuilder()
+  protected def _similar(candidateIdxs: Array[Idxs], idx: Int, cfg: LSHCfg): IndexResultBuilder = {
+    val candidates = selectCandidates(candidateIdxs, cfg)
+    val res = newIndexResultBuilder(false, cfg.maxResults)
 
     var i = 0 ; while (i < candidates.length) {
       if (candidates(i) != idx) {
@@ -462,29 +475,26 @@ abstract class LSH[Q, S] { self =>
 
 
   /** must never return duplicates */
-  protected def selectCandidates(candidateIdxs: Array[Idxs]): Idxs = {
+  protected def selectCandidates(candidateIdxs: Array[Idxs], cfg: LSHCfg): Idxs = {
     // TODO candidate selection can be done on the fly without allocations
     //      using some sort of merging cursor
 
-    val candidateCount = sumLength(candidateIdxs)
+    val cidxs = candidateIdxs filter accept(cfg)
+
+    var candidateCount, i = 0
+    while (i < cidxs.length) {
+      candidateCount += cidxs(i).length
+      i += 1
+    }
 
     if (candidateCount <= cfg.maxCandidates) {
-      fastSparse.union(candidateIdxs, candidateCount)
+      fastSparse.union(cidxs, candidateCount)
 
     } else {
       val map = new IntFreqMap(initialSize = cfg.maxCandidates, loadFactor = 0.42, freqThreshold = bands)
-      for (idxs <- candidateIdxs) { map ++= (idxs, 1) }
+      for (idxs <- cidxs) { map ++= (idxs, 1) }
       map.topK(cfg.maxCandidates)
     }
-  }
-
-  protected def sumLength(xs: Array[Idxs]) = {
-    var sum, i = 0
-    while (i < xs.length) {
-      sum += xs(i).length
-      i += 1
-    }
-    sum
   }
 
   protected def newIndexResultBuilder(distinct: Boolean = false, maxResults: Int = cfg.maxResults): IndexResultBuilder =
@@ -507,17 +517,19 @@ abstract class LSH[Q, S] { self =>
 
 trait LSHBulkOps[Q, S] { self: LSH[Q, S] =>
 
-  def allSimilarIndexes =
+  def allSimilarIndexes: Iterator[(Int, Idxs)] = allSimilarIndexes(self.cfg)
+  def allSimilarIndexes(cfg: LSHCfg): Iterator[(Int, Idxs)] =
     (cfg.compact, cfg.parallel) match {
-      case (true, par) => parallelBatches(0 until itemsCount iterator, par) { idx => (idx, similarIndexes(idx)) }
-      case (false, _)  => _allSimilar_notCompact map { case (idx, res) => (idx, res.result) }
+      case (true, par) => parallelBatches(0 until itemsCount iterator, par) { idx => (idx, similarIndexes(idx, cfg)) }
+      case (false, _)  => _allSimilar_notCompact(cfg) map { case (idx, res) => (idx, res.result) }
     }
 
-  def allSimilarItems =
+  def allSimilarItems: Iterator[(Int, Iterator[Sim])] = allSimilarItems(self.cfg)
+  def allSimilarItems(cfg: LSHCfg): Iterator[(Int, Iterator[Sim])] =
     (cfg.compact, cfg.parallel) match {
-      case (true, par) => parallelBatches(0 until itemsCount iterator, par) { idx => (idx, similarItems(idx)) }
+      case (true, par) => parallelBatches(0 until itemsCount iterator, par) { idx => (idx, similarItems(idx, cfg)) }
       case (false, _)  =>
-        val iter = _allSimilar_notCompact
+        val iter = _allSimilar_notCompact(cfg)
         parallelBatches(iter, cfg.parallel, batchSize = 256) { case (idx, simIdxs) =>
           (idx, indexResultBuilderToSims(simIdxs))
         }
@@ -526,7 +538,7 @@ trait LSHBulkOps[Q, S] { self: LSH[Q, S] =>
   /** Needs to store all similar indexes in memory + some overhead, but it's
     * much faster, because it needs to do only half of iterations and accessed
     * data have better cache locality. */
-  protected def _allSimilar_notCompact: Iterator[(Int, IndexResultBuilder)] = {
+  protected def _allSimilar_notCompact(cfg: LSHCfg): Iterator[(Int, IndexResultBuilder)] = {
 
     // maxCandidates option is simulated via sampling
     val comparisons = streamIndexes.map { idxs => (idxs.length.toDouble - 1) * idxs.length / 2 } sum
@@ -624,11 +636,11 @@ final case class LSHObj[Q, S, SkArr, Table <: LSHTable[SkArr]](
   val sketchLength = table.params.sketchLength
   val bands = table.params.bands
 
-  def _streamIndexes =
+  def rawStreamIndexes =
     table.rawStreamIndexes
 
-  def _candidateIndexes(skarr: SkArr, skidx: Int): Array[Idxs] =
-    table.rawCandidateIndexes(skarr, skidx) filter { accept(cfg) }
+  def rawCandidateIndexes(skarr: SkArr, skidx: Int): Array[Idxs] =
+    table.rawCandidateIndexes(skarr, skidx)
 }
 
 
