@@ -551,7 +551,7 @@ trait LSHBulkOps[Q, S] { self: LSH[Q, S] =>
       val partialResults = new CopyOnWriteArrayList[Array[IndexResultBuilder]]()
       val truncatedResultSize =
         if (cfg.maxResults < Int.MaxValue && cfg.parallelPartialResultSize < 1.0)
-          (cfg.maxResults * cfg.parallelPartialResultSize).toInt
+          math.max((cfg.maxResults * cfg.parallelPartialResultSize).toInt, 1)
         else cfg.maxResults
 
       val tl = new ThreadLocal[Array[IndexResultBuilder]] {
