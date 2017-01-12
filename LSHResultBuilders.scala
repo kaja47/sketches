@@ -4,10 +4,15 @@ import atrox.Cursor2
 import atrox.Bits
 import atrox.{ TopKIntInt, TopKIntIntEstimate/*, BruteForceTopKIntInt*/ }
 
+
 object IndexResultBuilder {
   def make(distinct: Boolean, maxResults: Int): IndexResultBuilder =
-    if (maxResults == Int.MaxValue) {
-      new AllIndexResultBuilder(distinct)
+    if (maxResults == 1) {
+      new SingularIndexResultBuilder
+    } else if (maxResults == Int.MaxValue && !distinct) {
+      new AllIndexResultBuilder
+    } else if (maxResults == Int.MaxValue && distinct) {
+      new AllDistinctIndexResultBuilder
     } else {
       new TopKIndexResultBuilder(maxResults, distinct)
     }
@@ -21,7 +26,37 @@ trait IndexResultBuilder {
   def idxScoreCursor: Cursor2[Int, Int]
 }
 
-class AllIndexResultBuilder(distinct: Boolean) extends IndexResultBuilder {
+
+class SingularIndexResultBuilder extends IndexResultBuilder {
+  private var empty = true
+  private var idx, score = 0
+
+  def size: Int = if (empty) 0 else 1
+  def += (idx: Int, score: Int): Unit = {
+    if (empty || score > this.score) {
+      this.idx = idx
+      this.score = score
+      this.empty = false
+    }
+  }
+  def ++= (rb: IndexResultBuilder): Unit = rb match {
+    case rb: SingularIndexResultBuilder =>
+      if (!rb.empty) this += (rb.idx, rb.score)
+    case _ => sys.error("this should never happen")
+  }
+  def result: Array[Int] = if (empty) Array.empty[Int] else Array(idx)
+  def idxScoreCursor: Cursor2[Int, Int] = new Cursor2[Int, Int] {
+    var valid = false
+    def moveNext() = { valid = !valid ; valid && !empty }
+    def key = idx
+    def value = score
+  }
+
+}
+
+
+
+class AllIndexResultBuilder extends IndexResultBuilder {
   private val res = new collection.mutable.ArrayBuilder.ofLong
   private var _size = 0
 
@@ -40,11 +75,11 @@ class AllIndexResultBuilder(distinct: Boolean) extends IndexResultBuilder {
   }
 
   def result = {
-    val arr = if (distinct) res.result.distinct else res.result
-    arr.map(x => Bits.unpackIntHi(x))
+    val arr = res.result
+    arr.sortBy(~_).map(x => Bits.unpackIntHi(x))
   }
   def idxScoreCursor = new Cursor2[Int, Int] {
-    private val arr = if (distinct) res.result.distinct else res.result
+    private val arr = res.result
     private var pos = -1
 
     def moveNext() = {
@@ -55,6 +90,33 @@ class AllIndexResultBuilder(distinct: Boolean) extends IndexResultBuilder {
     def value = Bits.unpackIntLo(arr(pos))
   }
 }
+
+/** Inefficient version just for completeness sake. */
+class AllDistinctIndexResultBuilder extends IndexResultBuilder {
+  private val set = collection.mutable.Set[(Int, Int)]()
+  def size = set.size
+  def += (idx: Int, score: Int): Unit = set += ((idx, score))
+  def ++= (rb: IndexResultBuilder): Unit = rb match {
+    case rb: AllDistinctIndexResultBuilder => this.set ++= rb.set
+    case _ => sys.error("this should never happen")
+  }
+  def result = set.map(_._1).toArray.sortBy(~_)
+
+  def idxScoreCursor = new Cursor2[Int, Int] {
+    var key, value = 0
+
+    def moveNext() = {
+      if (set.isEmpty) false else {
+        val h @ (kk, vv) = set.head
+        key = kk
+        value = vv
+        set.remove(h)
+        true
+      }
+    }
+  }
+}
+
 
 class TopKIndexResultBuilder(k: Int, distinct: Boolean) extends IndexResultBuilder {
   private var res: TopKIntInt = null // top-k is allocated only when it's needed
