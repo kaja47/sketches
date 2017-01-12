@@ -442,7 +442,7 @@ abstract class LSH[Q, S] { self =>
     def apply(idx: Int, cfg: LSHCfg) = _similar(rawCandidateIndexes(idx), idx, cfg).result
   }
 
-  def similarItems = new QQ[Iterator[Sim]] {
+  def similarItems = new QQ[IndexedSeq[Sim]] {
     def apply(q: Q, cfg: LSHCfg)     = indexResultBuilderToSims(_similar(rawCandidateIndexes(q), rank.map(q), cfg))
     def apply(idx: Int, cfg: LSHCfg) = indexResultBuilderToSims(_similar(rawCandidateIndexes(idx), idx, cfg))
   }
@@ -498,7 +498,7 @@ abstract class LSH[Q, S] { self =>
   }
 
 
-  protected def indexResultBuilderToSims(irb: IndexResultBuilder): Iterator[Sim] = {
+  protected def indexResultBuilderToSims(irb: IndexResultBuilder): IndexedSeq[Sim] = {
     val res = new Array[Sim](irb.size)
     val cur = irb.idxScoreCursor
 
@@ -510,7 +510,7 @@ abstract class LSH[Q, S] { self =>
 
     assert(i == 0, i)
 
-    res.iterator
+    res
   }
 
 }
@@ -526,8 +526,8 @@ trait LSHBulkOps[Q, S] { self: LSH[Q, S] =>
       case (false, _)  => _allSimilar_notCompact(cfg) map { case (idx, res) => (idx, res.result) }
     }
 
-  def allSimilarItems: Iterator[(Int, Iterator[Sim])] = allSimilarItems(self.cfg)
-  def allSimilarItems(cfg: LSHCfg): Iterator[(Int, Iterator[Sim])] =
+  def allSimilarItems: Iterator[(Int, IndexedSeq[Sim])] = allSimilarItems(self.cfg)
+  def allSimilarItems(cfg: LSHCfg): Iterator[(Int, IndexedSeq[Sim])] =
     (cfg.compact, cfg.parallel) match {
       case (true, par) => parallelBatches(0 until itemsCount iterator, par) { idx => (idx, similarItems(idx, cfg)) }
       case (false, _)  =>
