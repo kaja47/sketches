@@ -19,7 +19,7 @@ object IndexResultBuilder {
 }
 
 
-trait IndexResultBuilder {
+sealed trait IndexResultBuilder {
   def size: Int
   def += (idx: Int, score: Int): Unit
   def ++= (rb: IndexResultBuilder): Unit
@@ -33,8 +33,8 @@ trait IndexResultBuilder {
 
 
 class SingularIndexResultBuilder extends IndexResultBuilder {
-  private var empty = true
-  private var idx, score = 0
+  protected[atrox] var empty = true
+  protected[atrox] var idx, score = 0
 
   def size: Int = if (empty) 0 else 1
   def += (idx: Int, score: Int): Unit = {
@@ -56,9 +56,7 @@ class SingularIndexResultBuilder extends IndexResultBuilder {
     def key = idx
     def value = score
   }
-
 }
-
 
 
 class AllIndexResultBuilder extends IndexResultBuilder {
@@ -96,6 +94,7 @@ class AllIndexResultBuilder extends IndexResultBuilder {
     def value = Bits.unpackIntLo(arr(pos))
   }
 }
+
 
 /** Inefficient version just for completeness sake. */
 class AllDistinctIndexResultBuilder extends IndexResultBuilder {
@@ -140,12 +139,15 @@ class TopKIndexResultBuilder(k: Int, distinct: Boolean) extends IndexResultBuild
         createTopK()
         res addAll rb.res
       }
+    case rb: SingularIndexResultBuilder =>
+      if (!rb.empty) this += (rb.idx, rb.score)
     case _ => sys.error("this should never happen")
   }
 
   def result = if (res == null) Array() else res.drainToArray()
   def idxScoreCursor = { createTopK() ; res.drainCursorSortedAsc.swap }
 }
+
 
 class TopKEstimateIndexResultBuilder(k: Int) extends IndexResultBuilder {
   private var res: TopKIntIntEstimate = null // top-k is allocated only when it's needed
@@ -163,6 +165,8 @@ class TopKEstimateIndexResultBuilder(k: Int) extends IndexResultBuilder {
         createTopK()
         res addAll rb.res
       }
+    case rb: SingularIndexResultBuilder =>
+      if (!rb.empty) this += (rb.idx, rb.score)
     case _ => sys.error("this should never happen")
   }
 
