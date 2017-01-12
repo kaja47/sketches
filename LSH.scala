@@ -356,16 +356,6 @@ case class SketchRank[Q, SketchArray](sketch: Sketch[Q, SketchArray], sketchers:
   def derank(r: Int): Double = es.estimateSimilarity(r)
 }
 
-/** Useless ranker that is useful mainly for testing */
-case class BlindRank[Q]() extends Rank[Q, Q] {
-  def map(q: Q): Q = null.asInstanceOf[Q]
-  def map(idx: Int): Q = null.asInstanceOf[Q]
-  def rank(a: Q, b: Q): Int = 1
-  override def rank(a: Q, b: Int): Int = 1
-  override def rank(a: Int, b: Int): Int = 1
-  def derank(r: Int): Double = 1.0
-}
-
 
 
 /** LSH
