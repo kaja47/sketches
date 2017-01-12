@@ -18,11 +18,16 @@ object IndexResultBuilder {
     }
 }
 
+
 trait IndexResultBuilder {
   def size: Int
   def += (idx: Int, score: Int): Unit
   def ++= (rb: IndexResultBuilder): Unit
+  /** Result is sorted by score in descending order. Invocation of this method
+    * may destroy content of this IndexResultBuilder */
   def result: Array[Int]
+  /** Result is sorted by score in ascending order. Invocation of this method
+    * may destroy content of this IndexResultBuilder */
   def idxScoreCursor: Cursor2[Int, Int]
 }
 
@@ -80,6 +85,7 @@ class AllIndexResultBuilder extends IndexResultBuilder {
   }
   def idxScoreCursor = new Cursor2[Int, Int] {
     private val arr = res.result
+    java.util.Arrays.sort(arr)
     private var pos = -1
 
     def moveNext() = {
@@ -138,7 +144,7 @@ class TopKIndexResultBuilder(k: Int, distinct: Boolean) extends IndexResultBuild
   }
 
   def result = if (res == null) Array() else res.drainToArray()
-  def idxScoreCursor = { createTopK() ; res.cursor.swap }
+  def idxScoreCursor = { createTopK() ; res.drainCursorSortedAsc.swap }
 }
 
 class TopKEstimateIndexResultBuilder(k: Int) extends IndexResultBuilder {

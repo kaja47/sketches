@@ -274,6 +274,20 @@ class TopKIntInt(k: Int, distinct: Boolean = false) extends BaseMinIntIntHeap(k)
   }
 
   def valuesCursor = cursor.asValues
+
+  def drainCursorSortedAsc = new Cursor2[Int, Int] {
+    private var k, v = 0
+    def moveNext() =
+      if (size == 0) false else {
+        k = _minKey
+        v = _minValue
+        _deleteMin()
+        true
+      }
+
+    def key = k
+    def value = v
+  }
 }
 
 
