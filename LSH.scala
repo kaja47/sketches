@@ -2,6 +2,7 @@ package atrox.sketch
 
 import atrox.{ fastSparse, IntFreqMap, IntSet, Bits, Cursor2 }
 import java.util.concurrent.{ CopyOnWriteArrayList, ThreadLocalRandom }
+import java.util.concurrent.atomic.LongAdder
 import java.lang.Math.{ pow, log, max, min }
 import scala.util.hashing.MurmurHash3
 import scala.collection.{ mutable, GenSeq }
@@ -381,7 +382,10 @@ abstract class LSH[Q, S] { self =>
   def bands: Int
   def sketchLength: Int
 
+  val candidatesStats = new LongAdder
+
   def withConfig(cfg: LSHCfg): LSH[Q, S]
+
 
   def probabilityOfInclusion(sim: Double) = {
     val bandLen = sketchLength / bands
@@ -440,6 +444,7 @@ abstract class LSH[Q, S] { self =>
   protected def _similar(candidateIdxs: Array[Idxs], s: S, cfg: LSHCfg): IndexResultBuilder = {
     val candidates = selectCandidates(candidateIdxs, cfg)
     val res = IndexResultBuilder.make(false, cfg.maxResults)
+    candidatesStats.add(candidates.length)
 
     var i = 0 ; while (i < candidates.length) {
       res += (candidates(i), rank.rank(s, candidates(i)))
@@ -452,6 +457,7 @@ abstract class LSH[Q, S] { self =>
   protected def _similar(candidateIdxs: Array[Idxs], idx: Int, cfg: LSHCfg): IndexResultBuilder = {
     val candidates = selectCandidates(candidateIdxs, cfg)
     val res = IndexResultBuilder.make(false, cfg.maxResults)
+    candidatesStats.add(candidates.length)
 
     var i = 0 ; while (i < candidates.length) {
       if (candidates(i) != idx) {
@@ -581,6 +587,7 @@ trait LSHBulkOps[Q, S] { self: LSH[Q, S] =>
   }
 
   protected def runTile(idxs: Idxs, ratio: Double, res: Array[IndexResultBuilder]): Unit = {
+    var c = 0
     val stripeSize = 64
     var stripej = 0 ; while (stripej < idxs.length) {
       if (ThreadLocalRandom.current().nextDouble() < ratio) {
@@ -593,6 +600,7 @@ trait LSHBulkOps[Q, S] { self: LSH[Q, S] =>
             val score = rank.rank(idxs(i), idxs(j))
             res(idxs(i)) += (idxs(j), score)
             res(idxs(j)) += (idxs(i), score)
+            c += 1
 
             i += 1
           }
@@ -601,6 +609,8 @@ trait LSHBulkOps[Q, S] { self: LSH[Q, S] =>
       }
       stripej += stripeSize
     }
+
+    candidatesStats.add(c)
   }
 
   protected def parallelBatches[T, U](xs: Iterator[T], inParallel: Boolean, batchSize: Int = 1024)(f: T => U): Iterator[U] =
