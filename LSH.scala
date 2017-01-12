@@ -449,7 +449,7 @@ abstract class LSH[Q, S] { self =>
 
   protected def _similar(candidateIdxs: Array[Idxs], s: S, cfg: LSHCfg): IndexResultBuilder = {
     val candidates = selectCandidates(candidateIdxs, cfg)
-    val res = newIndexResultBuilder(false, cfg.maxResults)
+    val res = IndexResultBuilder.make(false, cfg.maxResults)
 
     var i = 0 ; while (i < candidates.length) {
       res += (candidates(i), rank.rank(s, candidates(i)))
@@ -461,7 +461,7 @@ abstract class LSH[Q, S] { self =>
 
   protected def _similar(candidateIdxs: Array[Idxs], idx: Int, cfg: LSHCfg): IndexResultBuilder = {
     val candidates = selectCandidates(candidateIdxs, cfg)
-    val res = newIndexResultBuilder(false, cfg.maxResults)
+    val res = IndexResultBuilder.make(false, cfg.maxResults)
 
     var i = 0 ; while (i < candidates.length) {
       if (candidates(i) != idx) {
@@ -497,8 +497,6 @@ abstract class LSH[Q, S] { self =>
     }
   }
 
-  protected def newIndexResultBuilder(distinct: Boolean = false, maxResults: Int = cfg.maxResults): IndexResultBuilder =
-    IndexResultBuilder.make(distinct, maxResults)
 
   protected def indexResultBuilderToSims(irb: IndexResultBuilder): Iterator[Sim] = {
     val cur = irb.idxScoreCursor
@@ -554,7 +552,7 @@ trait LSHBulkOps[Q, S] { self: LSH[Q, S] =>
 
       val tl = new ThreadLocal[Array[IndexResultBuilder]] {
         override def initialValue = {
-          val local = Array.fill(itemsCount)(newIndexResultBuilder(distinct = true, truncatedResultSize))
+          val local = Array.fill(itemsCount)(IndexResultBuilder.make(distinct = true, truncatedResultSize))
           partialResults.add(local)
           local
         }
@@ -570,7 +568,7 @@ trait LSHBulkOps[Q, S] { self: LSH[Q, S] =>
       val idxsArr = new Array[IndexResultBuilder](itemsCount)
       val pr = partialResults.toArray(Array[Array[IndexResultBuilder]]())
       (0 until itemsCount).par foreach { i =>
-        val target = newIndexResultBuilder(distinct = true)
+        val target = IndexResultBuilder.make(distinct = true, cfg.maxResults)
         for (p <- pr) target ++= p(i)
         idxsArr(i) = target
 
@@ -579,7 +577,7 @@ trait LSHBulkOps[Q, S] { self: LSH[Q, S] =>
       Iterator.tabulate(itemsCount) { idx => (idx, idxsArr(idx)) }
 
     } else {
-      val res = Array.fill(itemsCount)(newIndexResultBuilder(distinct = true))
+      val res = Array.fill(itemsCount)(IndexResultBuilder.make(distinct = true, cfg.maxResults))
       for (idxs <- streamIndexes) {
         runTile(idxs, ratio, res)
       }

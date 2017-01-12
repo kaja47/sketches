@@ -206,7 +206,7 @@ trait Sketch[T, SketchArray] extends Serializable with Sketching[T, SketchArray]
       // indexes
       case (false, false) =>
         val stripeSize = 64
-        val res = Array.fill(itemsCount)(newIndexResultBuilder)
+        val res = Array.fill(itemsCount)(IndexResultBuilder.make(false, cfg.maxResults)
 
         Iterator.range(0, itemsCount, step = stripeSize) flatMap { start =>
 
@@ -234,7 +234,7 @@ trait Sketch[T, SketchArray] extends Serializable with Sketching[T, SketchArray]
         println(s"copmact, stripesInParallel $stripesInParallel")
 
         Iterator.range(0, itemsCount, step = stripeSize * stripesInParallel) flatMap { pti =>
-          val res = Array.fill(stripeSize * stripesInParallel)(newIndexResultBuilder)
+          val res = Array.fill(stripeSize * stripesInParallel)(IndexResultBuilder.make(false, cfg.maxResults)
 
           parStripes(stripesInParallel, stripeSize, pti, itemsCount) { start =>
             stripeRun(stripeSize, start, itemsCount, minBits, minSim, f, false, new Op {
@@ -297,9 +297,6 @@ trait Sketch[T, SketchArray] extends Serializable with Sketching[T, SketchArray]
   */
 
   protected abstract class Op { def apply(thisIdx: Int, thatIdx: Int, est: Double, sim: Double): Unit }
-
-  protected def newIndexResultBuilder: IndexResultBuilder =
-    IndexResultBuilder.make(false, cfg.maxResults)
 
   protected def indexesToSims(idx: Int, simIdxs: Idxs, f: SimFun, sketch: SketchArray) =
     simIdxs.iterator.map { simIdx =>
