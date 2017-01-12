@@ -499,12 +499,16 @@ abstract class LSH[Q, S] { self =>
 
 
   protected def indexResultBuilderToSims(irb: IndexResultBuilder): Iterator[Sim] = {
+    val res = new Array[Sim](irb.size)
     val cur = irb.idxScoreCursor
-    val res = new ArrayBuffer[Sim](initialSize = irb.size)
 
+    var i = res.length
     while (cur.moveNext()) {
-      res += Sim(cur.key, rank.derank(cur.value))
+      i -= 1
+      res(i) = Sim(cur.key, rank.derank(cur.value))
     }
+
+    assert(i == 0, i)
 
     res.iterator
   }
