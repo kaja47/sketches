@@ -340,7 +340,7 @@ case class SketchRank[Q, SketchArray](sketch: Sketch[Q, SketchArray], sketchers:
   def es = sketch.estimator
 
   def map(q: Q): S = (sketchers.getSketchFragment(q), 0)
-  def map(idx: Int): S = (sketch.sketchArray, 0)
+  def map(idx: Int): S = (sketch.sketchArray, idx)
 
   def rank(a: S, b: S): Int = {
     val (skarra, idxa) = a
