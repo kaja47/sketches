@@ -240,7 +240,7 @@ class TopKIntInt(k: Int, distinct: Boolean = false) extends BaseMinIntIntHeap(k)
   def addAll(tk: TopKIntInt): Unit = {
     // backwrds iterations because that way heap is filled by big values and
     // rest is filered out by `key > min` condition in the insert method
-    var i = tk.top - 1; while (i >= 1) { // TODO why >= 1 ?
+    var i = tk.top - 1; while (i >= 0) {
       val key = high(tk.arr(i))
       val value = low(tk.arr(i))
       add(key, value)
