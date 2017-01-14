@@ -147,8 +147,6 @@ object LSH {
     )
 
     _buildTables(sk, params, cfg)(HashAndSlice.Bit)
-//      (sk, itemIdx, band, params) =>
-//        sk.getSketchFragment(itemIdx, band*params.bandLength, (band+1)*params.bandLength)(0).toInt
   }
 
   def buildIntLshTable[T](sk: IntSketching[T], cfg: LSHBuildCfg): IntArrayLSHTable[Array[Int]] = {
@@ -169,9 +167,6 @@ object LSH {
     )
 
     _buildTables(sk, params, cfg)(HashAndSlice.Int)
-//      (sk, itemIdx, band, params) =>
-//        val arr = sk.getSketchFragment(itemIdx, band*params.bandLength, (band+1)*params.bandLength)
-//        hashSlice(arr, params.bandLength, 0, 0, params.bandLength, params.hashBits)
   }
 
 
