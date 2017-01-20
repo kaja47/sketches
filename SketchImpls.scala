@@ -248,6 +248,8 @@ object RandomProjections {
     normalize(DenseVector.fill[Double](length)(rand.nextGaussian), 2)
     //normalize(DenseVector.rand[Double](length, Rand.gaussian), 2)
   }
+  
+  // def mkRank = (items: IndexedSeq[T]) => SimFun((a, b) => sum(pow(a - b, 2)), items)
 
   case class Estimator(sketchLength: Int) extends IntEstimator {
     def estimateSimilarity(sameBits: Int): Double = ???
@@ -437,18 +439,20 @@ object SpectralHashing {
 
 
 object HammingDistance {
-  def apply(arr: Array[Long], bits: Int): BitSketch[Any] = {
+  def apply(arr: Array[Long], bits: Int): BitSketch[Array[Long]] = {
     require(bits % 64 == 0)
 
-    BitSketch[Any](
-      arr,
-      new BitSketchers[Any] { self =>
-        val sketchLength = bits
-        val estimator = Estimator(bits)
-        val rank = None
-        def getSketchFragment(item: Any, from: Int, to: Int) = sys.error("this should not happen")
+    val sketchers: BitSketchers[Array[Long]] = new BitSketchers[Array[Long]] { self =>
+      val sketchLength = bits
+      val estimator = Estimator(bits)
+      val rank = None
+      def getSketchFragment(item: Array[Long]) = {
+        require(item.length*64 == bits)
+        item
       }
-    )
+    }
+
+    BitSketch[Array[Long]](arr, sketchers)
   }
 
   case class Estimator(sketchLength: Int) extends BitEstimator {
