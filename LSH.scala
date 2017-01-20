@@ -189,15 +189,18 @@ object LSH {
     apply(SketchingOf(items, sk), rank, cfg)
 
   def apply[T, S, SketchArray: Switch](sk: Sketching[T, SketchArray], rank: Rank[T, S], cfg: LSHBuildCfg): LSHObj[T, S, SketchArray, IntArrayLSHTable[SketchArray]] =
-    LSHObj(mkTlb(sk, cfg), SketchingQuery(sk, sk.sketchers), rank)
+    apply(mkTlb(sk, cfg), sk, rank)
+
+  def apply[T, S, SketchArray: Switch, Table <: LSHTable[SketchArray]](table: Table, sk: Sketching[T, SketchArray], rank: Rank[T, S]): LSHObj[T, S, SketchArray, Table] =
+    LSHObj(table, SketchingQuery(sk), rank)
 
 
 
   def estimating[T, SketchArray: Switch](sk: Sketch[T, SketchArray], cfg: LSHBuildCfg): LSHObj[T, (SketchArray, Int), SketchArray, IntArrayLSHTable[SketchArray]] =
-    apply(sk, SketchRank(sk, sk.sketchers), cfg)
+    apply(sk, SketchRank(sk), cfg)
 
   def estimating[T, SketchArray: Switch](items: IndexedSeq[T], sk: Sketchers[T, SketchArray], cfg: LSHBuildCfg): LSHObj[T, (SketchArray, Int), SketchArray, IntArrayLSHTable[SketchArray]] =
-    apply(items, sk, SketchRank(Sketch(items, sk), sk), cfg)
+    apply(items, sk, SketchRank(Sketch(items, sk)), cfg)
 
 
 
@@ -269,8 +272,8 @@ trait Query[-Q, SketchArray] {
 
 /** Sketching can be fully materialized Sketch table or dataset wrapped in
   * Sketching class */
-case class SketchingQuery[Q, SketchArray](sk: Sketching[Q, SketchArray], sketchers: Sketchers[Q, SketchArray]) extends Query[Q, SketchArray] {
-  def query(q: Q) = (sketchers.getSketchFragment(q), 0)
+case class SketchingQuery[Q, SketchArray](sk: Sketching[Q, SketchArray]) extends Query[Q, SketchArray] {
+  def query(q: Q) = (sk.sketchers.getSketchFragment(q), 0)
   def query(idx: Int) = (sk.getSketchFragment(idx), 0)
 
   // TODO Is this specialization needed? Does it have any speed benefit? If
@@ -329,13 +332,13 @@ case class DistFun[@specialized(Long) S](f: (S, S) => Double, dataset: IndexedSe
   def apply(a: S, b: S) = f(a, b)
 }
 
-case class SketchRank[Q, SketchArray](sketch: Sketch[Q, SketchArray], sketchers: Sketchers[Q, SketchArray]) extends Rank[Q, (SketchArray, Int)] {
+case class SketchRank[Q, SketchArray](sk: Sketch[Q, SketchArray]) extends Rank[Q, (SketchArray, Int)] {
 
   type S = (SketchArray, Int)
-  def es = sketch.estimator
+  def es = sk.estimator
 
-  def map(q: Q): S = (sketchers.getSketchFragment(q), 0)
-  def map(idx: Int): S = (sketch.sketchArray, idx)
+  def map(q: Q): S = (sk.sketchers.getSketchFragment(q), 0)
+  def map(idx: Int): S = (sk.sketchArray, idx)
 
   def rank(a: S, b: S): Int = {
     val (skarra, idxa) = a
@@ -344,7 +347,7 @@ case class SketchRank[Q, SketchArray](sketch: Sketch[Q, SketchArray], sketchers:
   }
   override def rank(a: S, b: Int): Int = {
     val (skarra, idxa) = a
-    es.sameBits(skarra, idxa, sketch.sketchArray, b)
+    es.sameBits(skarra, idxa, sk.sketchArray, b)
   }
   override def rank(a: Int, b: Int): Int = es.sameBits(sketch.sketchArray, a, sketch.sketchArray, b)
 
