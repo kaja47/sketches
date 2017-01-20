@@ -1,4 +1,4 @@
-package atrox
+package atrox.sort
 
 import java.util.Arrays
 import java.lang.Float.floatToRawIntBits

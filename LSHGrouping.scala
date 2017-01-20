@@ -1,7 +1,7 @@
 package atrox.sketch
 
 import scala.collection.mutable
-import atrox.RadixSort
+import atrox.sort.RadixSort
 import atrox.Bits
 import java.util.Arrays
 
