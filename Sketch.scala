@@ -40,13 +40,8 @@ trait Sketchers[T, SketchArray] { self =>
   def estimator: Estimator[SketchArray]
   def rank: Option[IndexedSeq[T] => Rank[T, T]]
 
-  /** @param itemIdx index of source item
-    * @param from index of first sketch component (inclusive)
-    * @param to index of last sketch component (exclusive)
-    */
-  def getSketchFragment(item: T, from: Int, to: Int): SketchArray
-  def getSketchFragment(item: T): SketchArray =
-    getSketchFragment(item, 0, sketchLength)
+  /** @param itemIdx index of source item */
+  def getSketchFragment(item: T): SketchArray
 }
 
 object Sketchers {
@@ -68,15 +63,12 @@ case class IntSketchersOf[T](
 
   val sketchLength = sketchers.length
 
-  def getSketchFragment(item: T, from: Int, to: Int): Array[Int] = {
-    val res = new Array[Int](to-from)
+  def getSketchFragment(item: T): Array[Int] = {
+    val res = new Array[Int](sketchLength)
     var i = 0
-    var j = from
-
-    while (j < to) {
-      res(i) = sketchers(j)(item)
+    while (i < sketchLength) {
+      res(i) = sketchers(i)(item)
       i += 1
-      j += 1
     }
     res
   }
@@ -90,19 +82,15 @@ case class BitSketchersOf[T](
 
   val sketchLength = sketchers.length
 
-  def getSketchFragment(item: T, from: Int, to: Int): Array[Long] = {
-    val res = new Array[Long]((to-from+63)/64)
+  def getSketchFragment(item: T): Array[Long] = {
+    val res = new Array[Long]((sketchLength+63)/64)
     var i = 0
-    var j = from
-
-    while (j < to) {
-      val s = sketchers(j)(item)
+    while (i < sketchLength) {
+      val s = sketchers(i)(item)
       val bit = if (s) 1L else 0L
       res(i / 64) |= (bit << (i % 64))
       i += 1
-      j += 1
     }
-
     res
   }
 
@@ -120,9 +108,7 @@ trait Sketching[T, SketchArray] { self =>
   def estimator: Estimator[SketchArray]
   def sketchers: Sketchers[T, SketchArray]
 
-  def getSketchFragment(itemIdx: Int, from: Int, to: Int): SketchArray
-  def getSketchFragment(itemIdx: Int): SketchArray =
-    getSketchFragment(itemIdx, 0, sketchLength)
+  def getSketchFragment(itemIdx: Int): SketchArray
 }
 
 case class SketchingOf[T, SketchArray](
@@ -134,8 +120,8 @@ case class SketchingOf[T, SketchArray](
   val itemsCount = items.length
   val estimator = sketchers.estimator
 
-  def getSketchFragment(itemIdx: Int, from: Int, to: Int): SketchArray =
-    sketchers.getSketchFragment(items(itemIdx), from, to)
+  def getSketchFragment(itemIdx: Int): SketchArray =
+    sketchers.getSketchFragment(items(itemIdx))
 }
 
 
@@ -406,8 +392,8 @@ case class IntSketch[T](
 
   def withConfig(_cfg: SketchCfg): IntSketch[T] = copy(cfg = _cfg)
 
-  def getSketchFragment(itemIdx: Int, from: Int, to: Int): Array[Int] =
-    Arrays.copyOfRange(sketchArray, itemIdx * sketchLength + from, itemIdx * sketchLength + to)
+  def getSketchFragment(itemIdx: Int): Array[Int] =
+    Arrays.copyOfRange(sketchArray, itemIdx * sketchLength, (itemIdx+1) * sketchLength)
 
   def sketeches: Iterator[Array[Int]] =
     Iterator.tabulate(itemsCount) { i => getSketchFragment(i) }
@@ -444,6 +430,6 @@ case class BitSketch[T](
 
   def withConfig(_cfg: SketchCfg): BitSketch[T] = copy(cfg = _cfg)
 
-  def getSketchFragment(itemIdx: Int, from: Int, to: Int): Array[Long] =
-    Bits.getBits(sketchArray, itemIdx * bitsPerSketch + from, itemIdx * bitsPerSketch + to)
+  def getSketchFragment(itemIdx: Int): Array[Long] =
+    Bits.getBits(sketchArray, itemIdx * bitsPerSketch, (itemIdx+1) * bitsPerSketch)
 }

@@ -470,8 +470,7 @@ object SimHash {
       val sketchLength = 64
       val estimator = HammingDistance.Estimator(64)
       val rank = None
-      def getSketchFragment(item: Array[T], from: Int, to: Int): Array[Long] = {
-        require(from == 0 && to == 64)
+      def getSketchFragment(item: Array[T]): Array[Long] = {
         Array[Long](doSimHash64(item, f))
       }
     }
