@@ -293,10 +293,12 @@ trait Rank[-Q, S] {
 
   def rank(a: S, b: Int): Int = rank(a, map(b))
 
-  /** Index based rank. It's intended for bulk methods that operates only on
+  /** Index based rank. It's intended for bulk methods that operate only on
     * internal tables. In that case it should be overwritten to use indexes
     * into Sketch object without any extra allocations. */
   def rank(a: Int, b: Int): Int = rank(map(a), map(b))
+
+  def rank(r: Double): Int
 
   /** Recover similarity/distance encoded in integer rank value. */
   def derank(r: Int): Double
@@ -306,7 +308,8 @@ trait Rank[-Q, S] {
 trait SimRank[@specialized(Long) S] extends Rank[S, S] {
   def apply(a: S, b: S): Double
 
-  def rank(a: S, b: S): Int = Bits.floatToSortableInt(apply(a, b).toFloat)
+  def rank(a: S, b: S): Int = rank(apply(a, b))
+  def rank(d: Double): Int = Bits.floatToSortableInt(d.toFloat)
   def derank(r: Int): Double = Bits.sortableIntToFloat(r)
 }
 
@@ -321,7 +324,8 @@ case class SimFun[S](f: (S, S) => Double, dataset: IndexedSeq[S]) extends SimRan
 trait DistRank[@specialized(Long) S] extends Rank[S, S] {
   def apply(a: S, b: S): Double
 
-  def rank(a: S, b: S): Int = ~Bits.floatToSortableInt(apply(a, b).toFloat)
+  def rank(a: S, b: S): Int = rank(apply(a, b))
+  def rank(d: Double): Int = ~Bits.floatToSortableInt(d.toFloat)
   def derank(r: Int): Double = Bits.sortableIntToFloat(~r)
 }
 
@@ -349,7 +353,28 @@ case class SketchRank[Q, SketchArray](sk: Sketch[Q, SketchArray]) extends Rank[Q
     val (skarra, idxa) = a
     es.sameBits(skarra, idxa, sk.sketchArray, b)
   }
+  override def rank(a: Int, b: Int): Int = es.sameBits(sk.sketchArray, a, sk.sketchArray, b)
+
+  def rank(d: Double): Int = d.toInt
+
+  /** Recover similarity/distance encoded in integer rank value. */
+  def derank(r: Int): Double = es.estimateSimilarity(r)
+}
+
+
+case class InlineSketchRank[Q, SketchArray](sketch: Sketch[Q, SketchArray], sketchers: Sketchers[Q, SketchArray]) extends Rank[Q, SketchArray] {
+
+  type S = SketchArray
+  def es = sketch.estimator
+
+  def map(q: Q): S = sketchers.getSketchFragment(q)
+  def map(idx: Int): S = sketch.getSketchFragment(idx)
+
+  def rank(a: S, b: S): Int = es.sameBits(a, 0, b, 0)
+  override def rank(a: S, b: Int): Int = es.sameBits(a, 0, sketch.sketchArray, b)
   override def rank(a: Int, b: Int): Int = es.sameBits(sketch.sketchArray, a, sketch.sketchArray, b)
+
+  def rank(d: Double): Int = d.toInt
 
   /** Recover similarity/distance encoded in integer rank value. */
   def derank(r: Int): Double = es.estimateSimilarity(r)
