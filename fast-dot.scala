@@ -300,7 +300,7 @@ object fastSparse {
 
     var i = 0
     while (i < sets.length) {
-      if (sets(i).length > 0)  {
+      if (sets(i) != null && sets(i).length > 0)  {
         heap.insert(sets(i)(0), i)
         positions(i) += 1
       }
@@ -353,28 +353,31 @@ object fastSparse {
   def union(sets: Array[Array[Int]], expectedResultSize: Int): Array[Int] =
     sets.length match {
       case 0 => new Array[Int](0)
-      case 1 => sets(0)
-      case 2 => union(sets(0), sets(1))
-      case _ =>
-        val (heap, positions) = _initUnion(sets)
-        var min = Long.MinValue
-        val buff = new collection.mutable.ArrayBuilder.ofInt
-        buff.sizeHint(expectedResultSize)
-
-        while (heap.nonEmpty) {
-          val key = heap.minKey
-          val i = heap.minValue
-
-          if (key.toLong != min) {
-            buff += key
-            min = key
-          }
-
-          _stepUnion(sets, i, heap, positions)
-        }
-
-        buff.result
+      //case 1 => sets(0)
+      //case 2 => union(sets(0), sets(1))
+      case _ => multiwayUnion(sets, expectedResultSize)
     }
+
+  private def multiwayUnion(sets: Array[Array[Int]], expectedResultSize: Int): Array[Int] = {
+    val (heap, positions) = _initUnion(sets)
+    var min = Long.MinValue
+    val buff = new collection.mutable.ArrayBuilder.ofInt
+    buff.sizeHint(expectedResultSize)
+
+    while (heap.nonEmpty) {
+      val key = heap.minKey
+      val i = heap.minValue
+
+      if (key.toLong != min) {
+        buff += key
+        min = key
+      }
+
+      _stepUnion(sets, i, heap, positions)
+    }
+
+    buff.result
+  }
 
   def unionBruteForce(sets: Array[Array[Int]]): Array[Int] = {
 
