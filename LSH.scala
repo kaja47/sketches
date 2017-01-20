@@ -498,22 +498,29 @@ abstract class LSH[Q, S] { self =>
     // TODO candidate selection can be done on the fly without allocations
     //      using some sort of merging cursor
 
-    val cidxs = candidateIdxs filter accept(cfg)
-
-    var candidateCount, i = 0
-    while (i < cidxs.length) {
-      candidateCount += cidxs(i).length
-      i += 1
-    }
+    val candidateCount = filterCandidatesAndCountThem(candidateIdxs, cfg)
 
     if (candidateCount <= cfg.maxCandidates) {
-      fastSparse.union(cidxs, candidateCount)
+      fastSparse.union(candidateIdxs, candidateCount)
 
     } else {
       val map = new IntFreqMap(initialSize = cfg.maxCandidates, loadFactor = 0.42, freqThreshold = bands)
-      for (idxs <- cidxs) { map ++= (idxs, 1) }
+      for (idxs <- candidateIdxs) { map ++= (idxs, 1) }
       map.topK(cfg.maxCandidates)
     }
+  }
+
+  def filterCandidatesAndCountThem(candidateIdxs: Array[Idxs], cfg: LSHCfg): Int = {
+    var candidateCount, i = 0
+    while (i < candidateIdxs.length) {
+      if (accept(cfg)(candidateIdxs(i))) {
+        candidateCount += candidateIdxs(i).length
+      } else {
+        candidateIdxs(i) = null
+      }
+      i += 1
+    }
+    candidateCount
   }
 
 
@@ -527,7 +534,7 @@ abstract class LSH[Q, S] { self =>
       res(i) = Sim(cur.key, rank.derank(cur.value))
     }
 
-    assert(i == 0, i)
+    //assert(i == 0)
 
     res
   }
