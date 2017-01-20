@@ -6,18 +6,12 @@ import scala. { specialized => spec }
   *
   * usage: while (cur.moveNext()) { doSomethingWith(cur.value) }
   * */
-trait Cursor[@spec(Int, Long, Float, Double) V] {
+abstract class Cursor[@spec(Int, Long, Float, Double) V] {
   def moveNext(): Boolean
   def value: V
 }
 
-class ArrayCursor[@spec(Int, Long, Float, Double) V](arr: Array[V]) extends Cursor[V] {
-  private var pos = -1
-  def moveNext(): Boolean = { pos += 1 ; pos < arr.length }
-  def value: V = arr(pos)
-}
-
-trait Cursor2[@spec(Int, Long, Float, Double) K, @spec(Int, Long, Float, Double) V] { self =>
+abstract class Cursor2[@spec(Int, Long, Float, Double) K, @spec(Int, Long, Float, Double) V] { self =>
   def moveNext(): Boolean
   def key: K
   def value: V

@@ -102,7 +102,7 @@ object Sketching {
   type BitSketching[T] = Sketching[T, Array[Long]]
 }
 
-trait Sketching[T, SketchArray] { self =>
+sealed abstract class Sketching[T, SketchArray] { self =>
   def itemsCount: Int
   def sketchLength: Int
   def estimator: Estimator[SketchArray]
@@ -137,7 +137,7 @@ object Sketch {
   }
 }
 
-trait Sketch[T, SketchArray] extends Serializable with Sketching[T, SketchArray] {
+sealed abstract class Sketch[T, SketchArray] extends Sketching[T, SketchArray] with Serializable {
 
   type Idxs = Array[Int]
   type SimFun = (Int, Int) => Double
