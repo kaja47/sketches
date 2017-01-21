@@ -13,6 +13,8 @@ libraryDependencies ++= Seq(
 
 fork := true
 
+scalacOptions ++= Seq("-feature")
+
 javaOptions ++= Seq(
   "-Xmx12G", "-Xms6G"//, "-XX:+UnlockDiagnosticVMOptions", "-XX:+LogCompilation", "-XX:+TraceClassLoading"
 )
