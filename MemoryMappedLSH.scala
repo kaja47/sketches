@@ -47,7 +47,7 @@ abstract class MMCommon[SketchArray] extends LSHTable[SketchArray] {
   protected def tableLength: Int
 
   protected def lookup(skarr: SketchArray, skidx: Int, band: Int): Idxs =
-    idxs(band * (1 << params.hashBits) + hashFun(skarr, skidx, band, params))
+    idxs(band * (1 << params.hashBits) + hashAndSlice.hashFun(skarr, skidx, band, params))
 
   def rawStreamIndexes: Iterator[Idxs] = Iterator.tabulate(tableLength)(idxs) filter (arr => arr != null && arr.length != 0)
 
@@ -110,8 +110,7 @@ object MemoryMappedLSHTable {
 
   def mmap[SketchArray](fileName: String, es: Estimator[SketchArray])(implicit has: HashAndSlice[SketchArray]): MemoryMappedLSHTable[SketchArray] =
     new MemoryMappedLSHTable[SketchArray](mmapTable(fileName)) {
-      def hashFun = has.hashFun
-      def sliceFun = has.sliceFun
+      def hashAndSlice = has
     }
 
   // [ sketchLength | bands | bandLength | hashBits | itemsCount | idxs length | offsets ... + offset behind the last array | arrays ]
