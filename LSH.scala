@@ -71,8 +71,6 @@ case class Sim(idx: Int, sim: Double)
 
 object LSH {
 
-  val NoEstimate = Double.NegativeInfinity
-
   def pickBands(threshold: Double, hashes: Int) = {
     require(threshold > 0.0)
     val target = hashes * -1 * log(threshold)
@@ -234,31 +232,6 @@ object LSH {
   }
 
 
-
-
-  def makeReverseMapping(length: Int, bands: Int, idxs: Array[Array[Int]]): Array[Array[Int]] =
-    makeReverseMapping(length, bands, idxs, idxs.length)
-
-  def makeReverseMapping(length: Int, bands: Int, idxs: Int => Array[Int], idxsLength: Int): Array[Array[Int]] = {
-    val revmap = Array.fill(length) {
-      val ab = new ArrayBuilder.ofInt
-      ab.sizeHint(bands)
-      ab
-    }
-
-    for (bidx <- 0 until idxsLength) {
-      val bucket = idxs(bidx)
-      if (bucket != null) {
-        var i = 0; while (i < bucket.length) {
-          revmap(bucket(i)) += bidx
-          i += 1
-        }
-      }
-    }
-
-    val res = revmap.map(_.result)
-    res
-  }
 
 }
 
