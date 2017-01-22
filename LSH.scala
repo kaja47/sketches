@@ -48,7 +48,9 @@ case class LSHCfg(
   /** This option controls proportional size of intermediate results allocated
     * during parallel non-compact bulk queries producing top-k results. Setting
     * it lower than 1 saves some memory but might reduce precision. */
-  parallelPartialResultSize: Double = 1.0
+  parallelPartialResultSize: Double = 1.0,
+
+  threshold: Double = Double.NegativeInfinity
 ) {
   require(parallelPartialResultSize > 0.0 && parallelPartialResultSize <= 1.0)
 
@@ -318,13 +320,18 @@ abstract class LSH[Q, S] { self =>
     def apply(idx: Int, cfg: LSHCfg) = indexResultBuilderToSims(_similar(rawCandidateIndexes(idx), idx, cfg))
   }
 
+  protected def threshold(cfg: LSHCfg): Int =
+    if (cfg.threshold == Double.NegativeInfinity) Int.MinValue else rank.rank(cfg.threshold)
+
   protected def _similar(candidateIdxs: Array[Idxs], s: S, cfg: LSHCfg): IndexResultBuilder = {
     val candidates = selectCandidates(candidateIdxs, cfg)
     val res = IndexResultBuilder.make(false, cfg.maxResults)
     candidatesStats.add(candidates.length)
 
+    val t = threshold(cfg)
     var i = 0 ; while (i < candidates.length) {
-      res += (candidates(i), rank.rank(s, candidates(i)))
+      val r = rank.rank(s, candidates(i))
+      if (r >= t) { res += (candidates(i), r) }
       i += 1
     }
 
@@ -336,9 +343,11 @@ abstract class LSH[Q, S] { self =>
     val res = IndexResultBuilder.make(false, cfg.maxResults)
     candidatesStats.add(candidates.length)
 
+    val t = threshold(cfg)
     var i = 0 ; while (i < candidates.length) {
       if (candidates(i) != idx) {
-        res += (candidates(i), rank.rank(idx, candidates(i)))
+        val r = rank.rank(idx, candidates(i))
+        if (r >= t) { res += (candidates(i), r) }
       }
       i += 1
     }
@@ -445,7 +454,7 @@ trait LSHBulkOps[Q, S] { self: LSH[Q, S] =>
       streamIndexes.grouped(1024).toVector.par.foreach { idxsgr =>
         val local = tl.get
         for (idxs <- idxsgr) {
-          runTile(idxs, ratio, local)
+          runTile(idxs, ratio, local, cfg)
         }
       }
 
@@ -463,14 +472,15 @@ trait LSHBulkOps[Q, S] { self: LSH[Q, S] =>
     } else {
       val res = Array.fill(itemsCount)(IndexResultBuilder.make(distinct = true, cfg.maxResults))
       for (idxs <- streamIndexes) {
-        runTile(idxs, ratio, res)
+        runTile(idxs, ratio, res, cfg)
       }
       Iterator.tabulate(itemsCount) { idx => (idx, res(idx)) }
     }
 
   }
 
-  protected def runTile(idxs: Idxs, ratio: Double, res: Array[IndexResultBuilder]): Unit = {
+  protected def runTile(idxs: Idxs, ratio: Double, res: Array[IndexResultBuilder], cfg: LSHCfg): Unit = {
+    val t = threshold(cfg)
     var c = 0
     val stripeSize = 64
     var stripej = 0 ; while (stripej < idxs.length) {
@@ -481,11 +491,13 @@ trait LSHBulkOps[Q, S] { self: LSH[Q, S] =>
           val realendi = min(j, endi)
           var i = stripej ; while (i < realendi) {
 
-            val score = rank.rank(idxs(i), idxs(j))
-            res(idxs(i)) += (idxs(j), score)
-            res(idxs(j)) += (idxs(i), score)
-            c += 1
+            val r = rank.rank(idxs(i), idxs(j))
+            if (r >= t) {
+              res(idxs(i)) += (idxs(j), r)
+              res(idxs(j)) += (idxs(i), r)
+            }
 
+            c += 1
             i += 1
           }
           j += 1
