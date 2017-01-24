@@ -439,6 +439,7 @@ object SpectralHashing {
 
 
 object HammingDistance {
+
   def apply(arr: Array[Long], bits: Int): BitSketch[Array[Long]] = {
     require(bits % 64 == 0)
 
@@ -454,6 +455,21 @@ object HammingDistance {
 
     BitSketch[Array[Long]](arr, sketchers)
   }
+
+  def apply(arr: Array[Array[Long]], bits: Int): BitSketch[Array[Long]] = {
+    val longs = (bits+63) / 64
+    val len = longs * arr.length
+    val res = new Array[Long](len)
+    var i = 0 ; while (i < len) {
+      var j = 0 ; while (j < longs) {
+        res(i*longs + j) = arr(i)(j)
+        j += 1
+      }
+      i += 1
+    }
+    apply(res, bits)
+  }
+
 
   case class Estimator(sketchLength: Int) extends BitEstimator {
     private[this] val inv = 1.0 / sketchLength
