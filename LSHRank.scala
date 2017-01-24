@@ -94,7 +94,7 @@ case class SketchRank[Q, SketchArray](sk: Sketch[Q, SketchArray]) extends Rank[Q
   }
   override def rank(a: Int, b: Int): Int = es.sameBits(sk.sketchArray, a, sk.sketchArray, b)
 
-  def rank(d: Double): Int = d.toInt
+  def rank(d: Double): Int = es.minSameBits(d)
 
   /** Recover similarity/distance encoded in integer rank value. */
   def derank(r: Int): Double = es.estimateSimilarity(r)
@@ -113,7 +113,7 @@ case class InlineSketchRank[Q, SketchArray](sketch: Sketch[Q, SketchArray], sket
   override def rank(a: S, b: Int): Int = es.sameBits(a, 0, sketch.sketchArray, b)
   override def rank(a: Int, b: Int): Int = es.sameBits(sketch.sketchArray, a, sketch.sketchArray, b)
 
-  def rank(d: Double): Int = d.toInt
+  def rank(d: Double): Int = es.minSameBits(d)
 
   /** Recover similarity/distance encoded in integer rank value. */
   def derank(r: Int): Double = es.estimateSimilarity(r)
