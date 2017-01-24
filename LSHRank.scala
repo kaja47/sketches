@@ -2,18 +2,12 @@ package atrox.sketch
 
 import atrox.Bits
 
-
-/** Trait implementing querying into LSH tables. */
-trait Query[-Q, SketchArray] {
-  def query(q: Q): SketchArray
-  def query(idx: Int): SketchArray
-}
-
 /** Sketching can be fully materialized Sketch table or dataset wrapped in
-  * Sketching class */
-case class SketchingQuery[Q, SketchArray](sk: Sketching[Q, SketchArray]) extends Query[Q, SketchArray] {
-  def query(q: Q) = sk.sketchers.getSketchFragment(q)
-  def query(idx: Int) = sk.getSketchFragment(idx)
+  * Sketching class.
+  * Both methods must return a freshly alocated array. */
+case class Query[Q, SketchArray](sk: Sketching[Q, SketchArray]) {
+  def query(q: Q): SketchArray = sk.sketchers.getSketchFragment(q)
+  def query(idx: Int): SketchArray = sk.getSketchFragment(idx)
 }
 
 

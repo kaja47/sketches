@@ -215,7 +215,7 @@ object LSH {
     apply(mkTlb(sk, cfg), sk, rank)
 
   def apply[T, S, SketchArray: Switch, Table <: LSHTable[SketchArray]](table: Table, sk: Sketching[T, SketchArray], rank: Rank[T, S]): LSHObj[T, S, SketchArray, Table] =
-    LSHObj(table, SketchingQuery(sk), rank)
+    LSHObj(table, Query(sk), rank)
 
 
 
