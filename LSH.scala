@@ -316,13 +316,8 @@ abstract class LSH[Q, S] { self =>
   def rawStreamIndexes: Iterator[Idxs]
   def rawCandidateIndexes(skarr: SketchArray, skidx: Int): Array[Idxs]
 
-  protected def rawCandidateIndexes(ss: (SketchArray, Int)): Array[Idxs] = {
-    val (skarr, skidx) = ss
-    rawCandidateIndexes(skarr, skidx)
-  }
-
-  def rawCandidateIndexes(q: Q): Array[Idxs]     = rawCandidateIndexes(query.query(q))
-  def rawCandidateIndexes(idx: Int): Array[Idxs] = rawCandidateIndexes(query.query(idx))
+  def rawCandidateIndexes(q: Q): Array[Idxs]     = rawCandidateIndexes(query.query(q), 0)
+  def rawCandidateIndexes(idx: Int): Array[Idxs] = rawCandidateIndexes(query.query(idx), 0)
 
 
 

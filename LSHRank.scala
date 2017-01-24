@@ -5,20 +5,15 @@ import atrox.Bits
 
 /** Trait implementing querying into LSH tables. */
 trait Query[-Q, SketchArray] {
-  def query(q: Q): (SketchArray, Int)
-  def query(idx: Int): (SketchArray, Int)
+  def query(q: Q): SketchArray
+  def query(idx: Int): SketchArray
 }
 
 /** Sketching can be fully materialized Sketch table or dataset wrapped in
   * Sketching class */
 case class SketchingQuery[Q, SketchArray](sk: Sketching[Q, SketchArray]) extends Query[Q, SketchArray] {
-  def query(q: Q) = (sk.sketchers.getSketchFragment(q), 0)
-  def query(idx: Int) = (sk.getSketchFragment(idx), 0)
-
-  // TODO Is this specialization needed? Does it have any speed benefit? If
-  // not, it might not be nesessary to produce pair (skarr, skidx) but only
-  // allocated skarr value.
-  //def query(idx: Int) = (sketchTable.sketchArray, idx)
+  def query(q: Q) = sk.sketchers.getSketchFragment(q)
+  def query(idx: Int) = sk.getSketchFragment(idx)
 }
 
 
