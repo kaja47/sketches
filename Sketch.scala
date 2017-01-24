@@ -40,7 +40,6 @@ trait Sketchers[T, SketchArray] { self =>
   def estimator: Estimator[SketchArray]
   def rank: Option[IndexedSeq[T] => Rank[T, T]]
 
-  /** @param itemIdx index of source item */
   def getSketchFragment(item: T): SketchArray
 }
 
