@@ -283,8 +283,20 @@ abstract class LSH[Q, S] { self =>
   def cfg: LSHCfg
   def bands: Int
   def sketchLength: Int
+  val stats = new Stats
 
-  val candidatesStats = new LongAdder
+  class Stats {
+    protected[atrox] val _candidates  = new LongAdder
+    protected[atrox] val _comparisons = new LongAdder
+
+    def candidates  = _candidates.sum
+    def comparisons = _comparisons.sum
+
+    def reset() = {
+      _candidates.reset()
+      _comparisons.reset()
+    }
+  }
 
   def withConfig(cfg: LSHCfg): LSH[Q, S]
 
@@ -344,7 +356,7 @@ abstract class LSH[Q, S] { self =>
   protected def _similar(candidateIdxs: Array[Idxs], s: S, cfg: LSHCfg): IndexResultBuilder = {
     val candidates = selectCandidates(candidateIdxs, cfg)
     val res = IndexResultBuilder.make(false, cfg.maxResults)
-    candidatesStats.add(candidates.length)
+    stats._comparisons.add(candidates.length)
 
     val t = threshold(cfg)
     var i = 0 ; while (i < candidates.length) {
@@ -359,7 +371,7 @@ abstract class LSH[Q, S] { self =>
   protected def _similar(candidateIdxs: Array[Idxs], idx: Int, cfg: LSHCfg): IndexResultBuilder = {
     val candidates = selectCandidates(candidateIdxs, cfg)
     val res = IndexResultBuilder.make(false, cfg.maxResults)
-    candidatesStats.add(candidates.length)
+    stats._comparisons.add(candidates.length)
 
     val t = threshold(cfg)
     var i = 0 ; while (i < candidates.length) {
@@ -380,6 +392,7 @@ abstract class LSH[Q, S] { self =>
     //      using some sort of merging cursor
 
     val candidateCount = filterCandidatesAndCountThem(candidateIdxs, cfg)
+    stats._candidates.add(candidateCount)
 
     if (candidateCount <= cfg.maxCandidates) {
       fastSparse.union(candidateIdxs, candidateCount)
@@ -524,7 +537,7 @@ trait LSHBulkOps[Q, S] { self: LSH[Q, S] =>
       stripej += stripeSize
     }
 
-    candidatesStats.add(c)
+    stats._comparisons.add(c)
   }
 
   protected def parallelBatches[T, U](xs: Iterator[T], inParallel: Boolean, batchSize: Int = 1024)(f: T => U): Iterator[U] =
