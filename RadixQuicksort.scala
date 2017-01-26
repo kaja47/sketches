@@ -2,6 +2,7 @@ package atrox.sort
 
 import java.util.Arrays
 import java.util.concurrent.ThreadLocalRandom
+import atrox.Bits
 
 // Three-way radix quicksort aka Multi-key quicksort
 //
@@ -34,8 +35,37 @@ object RadixQuicksortElement {
     def charAt(str: Long, pos: Int): Int = if (pos >= 8) -1 else (((str+0x8000000000000000L) >>> ((7-pos) * 8)) & 0xff).toInt
   }
 
+  implicit val FloatElement: RadixQuicksortElement[Float] = new RadixQuicksortElement[Float] {
+    def charAt(str: Float, pos: Int): Int = if (pos >= 4) -1 else ((Bits.floatToSortableInt(str)+0x80000000) >>> ((3-pos) * 8)) & 0xff
+  }
+
+  implicit val DoubleElement: RadixQuicksortElement[Double] = new RadixQuicksortElement[Double] {
+    def charAt(str: Double, pos: Int): Int = if (pos >= 8) -1 else (((Bits.doubleToSortableLong(str)+0x8000000000000000L) >>> ((7-pos) * 8)) & 0xff).toInt
+  }
+
   def Mapped[T, S](f: T => S)(implicit el: RadixQuicksortElement[S]) = new RadixQuicksortElement[T] {
     def charAt(str: T, pos: Int): Int = el.charAt(f(str), pos)
+  }
+
+  implicit def Option[T](implicit el: RadixQuicksortElement[T]) = new RadixQuicksortElement[Option[T]] {
+    def charAt(str: Option[T], pos: Int): Int =
+      if (pos == 0) {
+        if (str.isEmpty) -1 /*None*/ else 0 /*Some*/
+      } else {
+        el.charAt(str.get, pos-1)
+      }
+  }
+
+  implicit def Either[A, B](implicit ela: RadixQuicksortElement[A], elb: RadixQuicksortElement[B]) = new RadixQuicksortElement[Either[A, B]] {
+    def charAt(str: Either[A, B], pos: Int): Int =
+      if (pos == 0) {
+        if (str.isLeft) 1 else 2
+      } else {
+        str match {
+          case Left(x)  => ela.charAt(x, pos-1)
+          case Right(x) => elb.charAt(x, pos-1)
+        }
+      }
   }
 }
 
