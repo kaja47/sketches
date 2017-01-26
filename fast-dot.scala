@@ -542,7 +542,8 @@ object fastSparse {
 
 object Bits {
 
-  import java.lang.Float. { floatToRawIntBits, intBitsToFloat }
+  import java.lang.Float.{ floatToRawIntBits, intBitsToFloat }
+  import java.lang.Double.{ doubleToRawLongBits, longBitsToDouble }
   import java.lang.Integer.highestOneBit
 
   def getBits(arr: Array[Long], from: Int, to: Int): Array[Long] = {
@@ -642,19 +643,22 @@ object Bits {
   def unpackIntLo(l: Long): Int = l.toInt
   def unpackFloatHi(l: Long): Float = intBitsToFloat(unpackIntHi(l))
   def unpackFloatLo(l: Long): Float = intBitsToFloat(unpackIntLo(l))
-  def unpackSortableFloatHi(l: Long): Float = intBitsToFloat(floatUnflip(unpackIntHi(l)))
-  def unpackSortableFloatLo(l: Long): Float = intBitsToFloat(floatUnflip(unpackIntLo(l)))
+  def unpackSortableFloatHi(l: Long): Float = sortableIntToFloat(unpackIntHi(l))
+  def unpackSortableFloatLo(l: Long): Float = sortableIntToFloat(unpackIntLo(l))
 
   /** Converts float to signed int that preserve ordering,
     *  ie. if a < b, then ftsi(a) < ftsi(b)
     *  and if a < 0, then ftsi(a) < 0 */
   def floatToSortableInt(f: Float) = floatFlip(floatToRawIntBits(f))
-  def sortableIntToFloat(i: Int)   = intBitsToFloat(floatUnflip(i))
+  def sortableIntToFloat(i: Int)   = intBitsToFloat(floatFlip(i))
+
+  def doubleToSortableLong(f: Double) = doubleFlip(doubleToRawLongBits(f))
+  def sortableLongToDouble(i: Long)   = longBitsToDouble(doubleFlip(i))
 
   /** based on http://stereopsis.com/radix.html, except this converts to signed
     * ints. Only difference is that sign bit is never flipped. */
   protected def floatFlip(f: Int) = f ^ (-(f >>> 31) & 0x7FFFFFFF) // float to signed int
-  protected def floatUnflip(f: Int) = f ^ (-(f >>> 31) & 0x7FFFFFFF) // signed int to float
+  protected def doubleFlip(f: Long) = f ^ (-(f >>> 63) & 0x7FFFFFFFFFFFFFFFL)
 
   def higherPowerOfTwo(x: Int) =
     highestOneBit(x) << (if (highestOneBit(x) == x) 0 else 1)
