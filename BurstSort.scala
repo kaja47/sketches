@@ -4,8 +4,6 @@ import java.util.Arrays
 import scala.annotation.tailrec
 import scala.reflect.ClassTag
 
-// TODO
-// - ASCII strings, int arrays, long arrays
 // - reverse sorting, lazy sorting
 
 
