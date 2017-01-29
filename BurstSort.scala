@@ -4,8 +4,6 @@ import java.util.Arrays
 import scala.annotation.tailrec
 import scala.reflect.ClassTag
 
-// - reverse sorting, lazy sorting
-
 
 /** BurstSort
   *
@@ -17,41 +15,38 @@ import scala.reflect.ClassTag
   **/
 object BurstSort {
   /** in-place sorting */
-  def sort[S <: AnyRef](arr: Array[S])(implicit el: RadixElement[S]) = {
-    implicit val ct = el.classTag
-    (new BurstTrie[S, S] ++= arr).sortInto(arr, s => s)
-  }
+  def sort[S <: AnyRef: RadixElement](arr: Array[S]) =
+    (new BurstTrie[S, S]() ++= arr).sortInto(arr, s => s)
 
-  def sortBy[T <: AnyRef, S](arr: Array[T])(f: T => S)(implicit res: RadixElement[S], ct: ClassTag[T]) = {
-    implicit val rqelts = RadixElement.Mapped[T, S](f)
+  def reverseSort[S <: AnyRef: RadixElement](arr: Array[S]) =
+    (new BurstTrie[S, S]() ++= arr).sortInto(arr, s => s, true)
+
+  def sortBy[T <: AnyRef: ClassTag, S: RadixElement](arr: Array[T])(f: T => S) =
     (new BurstTrie[T, T]()(RadixElement.Mapped(f)) ++= arr).sortInto(arr, s => s)
-  }
 
   /*
   def sortBySchwartzianTransform[T <: AnyRef, S](arr: Array[T], f: T => S)(implicit ctts: ClassTag[(T, S)], cts: ClassTag[S], els: RadixElement[S]) = {
-    implicit val rqelts = RadixQuicksortElement.Mapped[(T, S), S](_._2)
+    implicit val rqelts = RadixElement.Mapped[(T, S), S](_._2)
     val trie = new BurstTrie[(T, S), T]()(RadixElement.Mapped(_._2))
     for (x <- arr) trie += (x, f(x))
     trie.sortInto(arr, ts => ts._1)
   }
   */
 
-  def sorted[S <: AnyRef](arr: TraversableOnce[S])(implicit ct: ClassTag[S], el: RadixElement[S]) = {
+  def sorted[S <: AnyRef : ClassTag : RadixElement](arr: TraversableOnce[S]) = {
     val trie = (new BurstTrie[S, S] ++= arr)
     val res = new Array[S](trie.size)
     trie.sortInto(res, s => s)
     res
   }
 
-  /*
-  def sortedBy[T, S](arr: TraversableOnce[T], f: T => S)(implicit ctts: ClassTag[(T, S)], cts: ClassTag[S], ctt: ClassTag[T], els: RadixElement[S]) = {
-    val trie = new BurstTrie[(T, S), T]()(RadixElement.Mapped(f))
-    for (x <- arr) trie += ((x, f(x)))
+  def sortedBy[T <: AnyRef: ClassTag, S: RadixElement](arr: TraversableOnce[T], f: T => S) = {
+    val trie = new BurstTrie[T, T]()(RadixElement.Mapped(f))
+    for (x <- arr) trie += x
     val res = new Array[T](trie.size)
-    trie.sortInto(res, ts => ts._1)
+    trie.sortInto(res, x => x)
     res
   }
-  */
 }
 
 
@@ -62,16 +57,12 @@ class BurstTrie[S <: AnyRef, R <: AnyRef](implicit el: RadixElement[S]) {
 
   val initSize = 16
   val resizeFactor = 8
-  val maxSize = 1024*8
+  val maxSize = 1024*4
 
   private var _size = 0
   private val root: Array[AnyRef] = new Array[AnyRef](257)
 
   def size = _size
-
-
-  def sortInto(res: Array[R], f: S => R): Unit =
-    sortInto0(res, f)
 
 
   def ++= (strs: TraversableOnce[S]): this.type = {
@@ -127,15 +118,20 @@ class BurstTrie[S <: AnyRef, R <: AnyRef](implicit el: RadixElement[S]) {
   }
 
 
-  protected def sortInto0(res: Array[R], f: S => R): Unit = {
+  def sortInto(res: Array[R], f: S => R, reverse: Boolean = false): Unit = {
     var pos = 0
 
     def run(node: Array[AnyRef], depth: Int): Unit = {
-      doNode(node(0), false, depth, f)
-
-      var i = 1 ; while (i < 257) {
-        doNode(node(i), true, depth, f)
-        i += 1
+      if (!reverse) {
+        var i = 0 ; while (i < 257) {
+          doNode(node(i), i != 0, depth, f)
+          i += 1
+        }
+      } else {
+        var i = 256 ; while (i >= 0) {
+          doNode(node(i), i != 0, depth, f)
+          i -= 1
+        }
       }
     }
 
@@ -146,9 +142,18 @@ class BurstTrie[S <: AnyRef, R <: AnyRef](implicit el: RadixElement[S]) {
           el.sort(leaf.values, leaf.size, depth)
         }
         //System.arraycopy(leaf.values, 0, res, pos, leaf.size)
-        var i = 0 ; while (i < leaf.size) {
-          res(i+pos) = f(leaf.values(i))
-          i += 1
+        if (reverse) {
+          var i = 0 ; var j = leaf.size-1 ; while (i < leaf.size) {
+            res(pos+j) = f(leaf.values(i))
+            i += 1
+            j -= 1
+          }
+
+        } else {
+          var i = 0 ; while (i < leaf.size) {
+            res(pos+i) = f(leaf.values(i))
+            i += 1
+          }
         }
 
         pos += leaf.size
@@ -156,6 +161,22 @@ class BurstTrie[S <: AnyRef, R <: AnyRef](implicit el: RadixElement[S]) {
     }
 
     run(root, 0)
+  }
+
+
+  private def inorder: Iterator[(Int, BurstLeaf[S])] = {
+    def iterate(node: AnyRef, depth: Int): Iterator[(Int, BurstLeaf[S])] = node match {
+      case null => Iterator()
+      case leaf: BurstLeaf[S @unchecked] => Iterator((depth, leaf))
+      case node: Array[AnyRef] => node.iterator.flatMap(n => iterate(n, depth+1))
+    }
+
+    iterate(root, 0)
+  }
+
+  def lazySort = inorder.flatMap { case (depth, leaf) =>
+    el.sort(leaf.values, leaf.size, depth)
+    leaf.values
   }
 
 }
