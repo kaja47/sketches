@@ -169,18 +169,22 @@ class BurstTrie[S <: AnyRef](implicit el: RadixElement[S]) {
   }
 
 
-  private def inorder: Iterator[(Int, BurstLeaf[S])] = {
-    def iterate(node: AnyRef, depth: Int): Iterator[(Int, BurstLeaf[S])] = node match {
+  private case class LeafJob(leaf: BurstLeaf[S], depth: Int, sort: Boolean)
+
+  private def inorder: Iterator[LeafJob] = {
+    def iterate(node: AnyRef, depth: Int, sort: Boolean): Iterator[LeafJob] = node match {
       case null => Iterator()
-      case leaf: BurstLeaf[S @unchecked] => Iterator((depth, leaf))
-      case node: Array[AnyRef] => node.iterator.flatMap(n => iterate(n, depth+1))
+      case leaf: BurstLeaf[S @unchecked] => Iterator(LeafJob(leaf, depth, sort))
+      case node: Array[AnyRef] => Iterator.range(0, node.length) flatMap { i => iterate(node(i), depth+1, i != 0) }
     }
 
-    iterate(root, 0)
+    iterate(root, 0, true)
   }
 
-  def lazySort = inorder.flatMap { case (depth, leaf) =>
-    el.sort(leaf.values, leaf.size, depth)
+  def lazySort = inorder.flatMap { case LeafJob(leaf, depth, sort) =>
+    if (sort) {
+      el.sort(leaf.values, leaf.size, depth)
+    }
     Iterator.tabulate(leaf.size)(i => leaf.values(i))
   }
 
