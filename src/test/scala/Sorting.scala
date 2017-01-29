@@ -34,6 +34,11 @@ class BurstSort extends FlatSpec {
       assert(arr === res)
     }
     {
+      val res = arr.sorted
+      val srt = BurstTrie(arr).lazySort.toArray
+      assert(srt === res)
+    }
+    {
       val res = arr.sorted.reverse
       BurstSort.reverseSort(arr)
       assert(arr === res)

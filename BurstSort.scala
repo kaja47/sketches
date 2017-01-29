@@ -176,7 +176,7 @@ class BurstTrie[S <: AnyRef, R <: AnyRef](implicit el: RadixElement[S]) {
 
   def lazySort = inorder.flatMap { case (depth, leaf) =>
     el.sort(leaf.values, leaf.size, depth)
-    leaf.values
+    Iterator.tabulate(leaf.size)(i => leaf.values(i))
   }
 
 }
