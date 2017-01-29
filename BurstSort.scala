@@ -16,13 +16,13 @@ import scala.reflect.ClassTag
 object BurstSort {
   /** in-place sorting */
   def sort[S <: AnyRef: RadixElement](arr: Array[S]) =
-    (new BurstTrie[S, S]() ++= arr).sortInto(arr, s => s)
+    (new BurstTrie[S] ++= arr).sortInto(arr, s => s)
 
   def reverseSort[S <: AnyRef: RadixElement](arr: Array[S]) =
-    (new BurstTrie[S, S]() ++= arr).sortInto(arr, s => s, true)
+    (new BurstTrie[S] ++= arr).sortInto(arr, s => s, true)
 
   def sortBy[T <: AnyRef: ClassTag, S: RadixElement](arr: Array[T])(f: T => S) =
-    (new BurstTrie[T, T]()(RadixElement.Mapped(f)) ++= arr).sortInto(arr, s => s)
+    (new BurstTrie[T]()(RadixElement.Mapped(f)) ++= arr).sortInto(arr, s => s)
 
   /*
   def sortBySchwartzianTransform[T <: AnyRef, S](arr: Array[T], f: T => S)(implicit ctts: ClassTag[(T, S)], cts: ClassTag[S], els: RadixElement[S]) = {
@@ -34,14 +34,14 @@ object BurstSort {
   */
 
   def sorted[S <: AnyRef : ClassTag : RadixElement](arr: TraversableOnce[S]) = {
-    val trie = (new BurstTrie[S, S] ++= arr)
+    val trie = (new BurstTrie[S] ++= arr)
     val res = new Array[S](trie.size)
     trie.sortInto(res, s => s)
     res
   }
 
   def sortedBy[T <: AnyRef: ClassTag, S: RadixElement](arr: TraversableOnce[T], f: T => S) = {
-    val trie = new BurstTrie[T, T]()(RadixElement.Mapped(f))
+    val trie = new BurstTrie[T]()(RadixElement.Mapped(f))
     for (x <- arr) trie += x
     val res = new Array[T](trie.size)
     trie.sortInto(res, x => x)
@@ -51,7 +51,12 @@ object BurstSort {
 
 
 
-class BurstTrie[S <: AnyRef, R <: AnyRef](implicit el: RadixElement[S]) {
+object BurstTrie {
+  def apply[T <: AnyRef: RadixElement](xs: TraversableOnce[T]) = new BurstTrie[T] ++= xs
+}
+
+
+class BurstTrie[S <: AnyRef](implicit el: RadixElement[S]) {
 
   implicit def ct = el.classTag
 
@@ -118,7 +123,7 @@ class BurstTrie[S <: AnyRef, R <: AnyRef](implicit el: RadixElement[S]) {
   }
 
 
-  def sortInto(res: Array[R], f: S => R, reverse: Boolean = false): Unit = {
+  def sortInto[R <: AnyRef](res: Array[R], f: S => R, reverse: Boolean = false): Unit = {
     var pos = 0
 
     def run(node: Array[AnyRef], depth: Int): Unit = {
