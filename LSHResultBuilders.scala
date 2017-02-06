@@ -150,6 +150,7 @@ class TopKIndexResultBuilder(k: Int, distinct: Boolean) extends IndexResultBuild
 
 
 class TopKEstimateIndexResultBuilder(k: Int) extends IndexResultBuilder {
+  ???
   private var res: TopKIntIntEstimate = null // top-k is allocated only when it's needed
   private def createTopK() = if (res == null) res = ??? // new TopKIntIntEstimate(k, 3)
 
