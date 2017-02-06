@@ -51,7 +51,17 @@ case class LSHCfg(
     * it lower than 1 saves some memory but might reduce precision. */
   parallelPartialResultSize: Double = 1.0,
 
-  threshold: Double = Double.NegativeInfinity
+  threshold: Double = Double.NegativeInfinity,
+
+  /** How many probes will be performed in every hash table.
+    *  1 = normal LSH
+    * >1 = multi-probe LSH (http://www.cs.princeton.edu/cass/papers/mplsh_vldb07.pdf)
+    *
+    * When multi-probe LSH is enabled, it selects candidates from nearby
+    * buckets. This can lead to high recall with small number of hash-tables
+    * (bands).
+    **/
+  probes: Int = 1
 ) {
   require(parallelPartialResultSize > 0.0 && parallelPartialResultSize <= 1.0)
 
@@ -215,7 +225,7 @@ object LSH {
     apply(mkTlb(sk, cfg), sk, rank)
 
   def apply[T, S, SketchArray: Switch, Table <: LSHTable[SketchArray]](table: Table, sk: Sketching[T, SketchArray], rank: Rank[T, S]): LSHObj[T, S, SketchArray, Table] =
-    LSHObj(table, Query(sk), rank)
+    LSHObj(table, sk, rank)
 
 
 
@@ -267,7 +277,7 @@ object LSH {
   *   maxBucketSize, maxCandidates and maxResults config options.
   * - Methods without "raw" prefix must never return duplicates and query item itself
   *
-  * Those combinations introduce non-determenism:
+  * Those combinations introduce non-determinism:
   * - non compact + max candidates (candidate selection is done by random sampling)
   * - parallel + non compact
   *
@@ -277,12 +287,15 @@ abstract class LSH[Q, S] { self =>
   type SketchArray
   type Idxs = Array[Int]
 
-  def query: Query[Q, SketchArray]
+  def sketching: Sketching[Q, SketchArray]
   def rank: Rank[Q, S]
+  def table: LSHTable[SketchArray]
   def itemsCount: Int
   def cfg: LSHCfg
-  def bands: Int
   def sketchLength: Int
+  def bands: Int
+  def bandLength: Int
+
   val stats = new Stats
 
   class Stats {
@@ -323,31 +336,85 @@ abstract class LSH[Q, S] { self =>
   }
 
 
-
   // raw = without any filtering, presented as is
-  def rawStreamIndexes: Iterator[Idxs]
-  def rawCandidateIndexes(skarr: SketchArray, skidx: Int): Array[Idxs]
+  def rawStreamIndexes: Iterator[Idxs] =
+    table.rawStreamIndexes
+  def rawCandidateIndexes(skarr: SketchArray, skidx: Int): Array[Idxs] =
+    table.rawCandidateIndexes(skarr, skidx)
 
-  def rawCandidateIndexes(q: Q): Array[Idxs]     = rawCandidateIndexes(query.query(q), 0)
-  def rawCandidateIndexes(idx: Int): Array[Idxs] = rawCandidateIndexes(query.query(idx), 0)
+  def multiCandidateIndexes(mf: MultiFragment[SketchArray], probes: Int): Array[Idxs] = {
+
+    mf.hashes match {
+      case _: Array[Int] =>
+        val hashes = mf.hashes.asInstanceOf[Array[Int]]
+        val costs = mf.costs
+        val neighbours = mf.neighbours.asInstanceOf[Array[Int]]
+
+        assert(costs == null)
+
+        val flipMaps: Array[Array[Int]] =
+          if (probes == 1) {
+            null
+          } else if (costs == null) {
+            Array.range(0, bandLength*bands)
+              .grouped(bandLength)
+              .toArray
+          } else {
+            costs
+              .zipWithIndex
+              .grouped(bandLength)
+              .take(bands)
+              .map(ci => ci.sortBy(_._1).map(_._2))
+              .toArray
+          }
+
+        val first = rawCandidateIndexes(hashes.asInstanceOf[SketchArray], 0)
+
+        val rest = Array.tabulate(probes-1) { p =>
+
+          val copy = hashes.clone
+
+          for (b <- 0 until bands) {
+            val flipPos = flipMaps(b)(p)
+            copy(flipPos) = neighbours(flipPos)
+          }
+
+          rawCandidateIndexes(copy.asInstanceOf[SketchArray], 0)
+
+        }
+
+        (first +: rest).flatten
+
+      case skarr: Array[Long] => ???
+      case _ => sys.error("this should not happen")
+    }
+  }
+
+  private def query(q: Q) = sketching.sketchers.getSketchFragment(q)
+  private def query(idx: Int) = sketching.getSketchFragment(idx)
+  private def multiQuery(q: Q) = sketching.sketchers.getSketchMultiFragment(q)
+
+  //def rawCandidateIndexes(q: Q, cfg: LSHCfg): Array[Idxs]     = multiCandidateIndexes(multiQuery(q), cfg.probes)
+  def rawCandidateIndexes(q: Q, cfg: LSHCfg): Array[Idxs]     = rawCandidateIndexes(query(q), 0)
+  def rawCandidateIndexes(idx: Int, cfg: LSHCfg): Array[Idxs] = rawCandidateIndexes(query(idx), 0)
 
 
 
   def streamIndexes: Iterator[Idxs] = rawStreamIndexes filter accept(cfg)
 
   def candidateIndexes = new QQ[Idxs] {
-    def apply(q: Q, cfg: LSHCfg)     = fastSparse.union(rawCandidateIndexes(q) filter accept(cfg))
-    def apply(idx: Int, cfg: LSHCfg) = fastSparse.union(rawCandidateIndexes(idx) filter accept(cfg))
+    def apply(q: Q, cfg: LSHCfg)     = fastSparse.union(rawCandidateIndexes(q, cfg) filter accept(cfg))
+    def apply(idx: Int, cfg: LSHCfg) = fastSparse.union(rawCandidateIndexes(idx, cfg) filter accept(cfg))
   }
 
   def similarIndexes = new QQ[Idxs] {
-    def apply(q: Q, cfg: LSHCfg)     = _similar(rawCandidateIndexes(q), rank.map(q), cfg).result
-    def apply(idx: Int, cfg: LSHCfg) = _similar(rawCandidateIndexes(idx), idx, cfg).result
+    def apply(q: Q, cfg: LSHCfg)     = _similar(rawCandidateIndexes(q, cfg), rank.map(q), cfg).result
+    def apply(idx: Int, cfg: LSHCfg) = _similar(rawCandidateIndexes(idx, cfg), idx, cfg).result
   }
 
   def similarItems = new QQ[IndexedSeq[Sim]] {
-    def apply(q: Q, cfg: LSHCfg)     = indexResultBuilderToSims(_similar(rawCandidateIndexes(q), rank.map(q), cfg))
-    def apply(idx: Int, cfg: LSHCfg) = indexResultBuilderToSims(_similar(rawCandidateIndexes(idx), idx, cfg))
+    def apply(q: Q, cfg: LSHCfg)     = indexResultBuilderToSims(_similar(rawCandidateIndexes(q, cfg), rank.map(q), cfg))
+    def apply(idx: Int, cfg: LSHCfg) = indexResultBuilderToSims(_similar(rawCandidateIndexes(idx, cfg), idx, cfg))
   }
 
   protected def threshold(cfg: LSHCfg): Int =
@@ -387,7 +454,7 @@ abstract class LSH[Q, S] { self =>
 
 
   /** must never return duplicates */
-  protected def selectCandidates(candidateIdxs: Array[Idxs], cfg: LSHCfg): Idxs = {
+  def selectCandidates(candidateIdxs: Array[Idxs], cfg: LSHCfg): Idxs = {
     // TODO candidate selection can be done on the fly without allocations
     //      using some sort of merging cursor
 
@@ -552,7 +619,7 @@ trait LSHBulkOps[Q, S] { self: LSH[Q, S] =>
 
 final case class LSHObj[Q, S, SkArr, Table <: LSHTable[SkArr]](
     table: Table,
-    query: Query[Q, SkArr],
+    sketching: Sketching[Q, SkArr],
     rank: Rank[Q, S],
     cfg: LSHCfg = LSHCfg()
   ) extends LSH[Q, S] with LSHBulkOps[Q, S] {
@@ -564,12 +631,7 @@ final case class LSHObj[Q, S, SkArr, Table <: LSHTable[SkArr]](
   val itemsCount = table.params.itemsCount
   val sketchLength = table.params.sketchLength
   val bands = table.params.bands
-
-  def rawStreamIndexes =
-    table.rawStreamIndexes
-
-  def rawCandidateIndexes(skarr: SkArr, skidx: Int): Array[Idxs] =
-    table.rawCandidateIndexes(skarr, skidx)
+  val bandLength = table.params.bandLength
 }
 
 

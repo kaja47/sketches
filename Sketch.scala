@@ -26,71 +26,129 @@ case class SketchCfg(
 
 trait IntSketcher[-T] extends (T => Int) {
   /** reduces one item to one component of sketch */
-  def apply(item: T): Int
+  def apply(item: T): Int = multi(item).hash
+  def multi(item: T): IntMulti
 }
+
+case class IntMulti(
+  hash: Int,
+  /** cost of flipping, smaller value means this component is more borderline and flipping can yield more suitable candidates */
+  cost: Double,
+  neighbour: Int
+)
 
 trait BitSketcher[-T] extends (T => Boolean) {
   /** reduces one item to one component of sketch */
-  def apply(item: T): Boolean
+  def apply(item: T): Boolean = multi(item).hash
+  def multi(item: T): BitMulti
 }
+
+case class BitMulti(
+  hash: Boolean,
+  cost: Double
+)
 
 
 trait Sketchers[T, SketchArray] { self =>
   def sketchLength: Int
   def estimator: Estimator[SketchArray]
   def rank: Option[IndexedSeq[T] => Rank[T, T]]
+  def uniformCost: Boolean
 
   def getSketchFragment(item: T): SketchArray
+  def getSketchMultiFragment(item: T): MultiFragment[SketchArray]
 }
 
-object Sketchers {
-  def apply[T](sketchers: Array[T => Int], estimator: IntEstimator, rank: Option[IndexedSeq[T] => Rank[T, T]]) = IntSketchersOf(sketchers, estimator, rank)
-  def apply[T](n: Int, mk: Int => (T => Int), estimator: IntEstimator, rank: Option[IndexedSeq[T] => Rank[T, T]]) = IntSketchersOf(Array.tabulate(n)(mk), estimator, rank)
+case class MultiFragment[SketchArray](
+  hashes: SketchArray,
+  costs: Array[Double],
+  neighbours: SketchArray
+)
 
-  def apply[T](sketchers: Array[T => Boolean], estimator: BitEstimator, rank: Option[IndexedSeq[T] => Rank[T, T]]) = BitSketchersOf(sketchers, estimator, rank)
-  def apply[T](n: Int, mk: Int => T => Boolean, estimator: BitEstimator, rank: Option[IndexedSeq[T] => Rank[T, T]]) = BitSketchersOf(Array.tabulate(n)(mk), estimator, rank)
+object Sketchers {
+  def apply[T](sketchers: Array[IntSketcher[T]], estimator: IntEstimator, rank: Option[IndexedSeq[T] => Rank[T, T]], uniformCost: Boolean) =
+    IntSketchersOf(sketchers, estimator, rank, uniformCost)
+  def apply[T](n: Int, mk: Int => IntSketcher[T], estimator: IntEstimator, rank: Option[IndexedSeq[T] => Rank[T, T]], uniformCost: Boolean) =
+    IntSketchersOf(Array.tabulate(n)(mk), estimator, rank, uniformCost)
+
+  def apply[T](sketchers: Array[BitSketcher[T]], estimator: BitEstimator, rank: Option[IndexedSeq[T] => Rank[T, T]], uniformCost: Boolean) =
+    BitSketchersOf(sketchers, estimator, rank, uniformCost)
+  def apply[T](n: Int, mk: Int => BitSketcher[T], estimator: BitEstimator, rank: Option[IndexedSeq[T] => Rank[T, T]], uniformCost: Boolean) =
+    BitSketchersOf(Array.tabulate(n)(mk), estimator, rank, uniformCost)
 }
 
 trait IntSketchers[T] extends Sketchers[T, Array[Int]]
 trait BitSketchers[T] extends Sketchers[T, Array[Long]]
 
 case class IntSketchersOf[T](
-  sketchers: Array[T => Int],
+  sketchers: Array[IntSketcher[T]],
   estimator: IntEstimator,
-  rank: Option[IndexedSeq[T] => Rank[T, T]]
+  rank: Option[IndexedSeq[T] => Rank[T, T]],
+  uniformCost: Boolean
 ) extends IntSketchers[T] {
 
   val sketchLength = sketchers.length
 
   def getSketchFragment(item: T): Array[Int] = {
     val res = new Array[Int](sketchLength)
-    var i = 0
-    while (i < sketchLength) {
+    var i = 0 ; while (i < sketchLength) {
       res(i) = sketchers(i)(item)
       i += 1
     }
     res
   }
+
+  def getSketchMultiFragment(item: T): MultiFragment[Array[Int]] = {
+    val hashes     = new Array[Int](sketchLength)
+    val costs      = if (uniformCost) null else new Array[Double](sketchLength)
+    val neighbours = new Array[Int](sketchLength)
+
+    var i = 0 ; while (i < sketchLength) {
+      val m = sketchers(i).multi(item)
+      hashes(i)     = m.hash
+      if (!uniformCost) {
+        costs(i)      = m.cost
+      }
+      neighbours(i) = m.neighbour
+      i += 1
+    }
+
+    MultiFragment(hashes, costs, neighbours)
+  }
 }
 
 case class BitSketchersOf[T](
-  sketchers: Array[T => Boolean],
+  sketchers: Array[BitSketcher[T]],
   estimator: BitEstimator,
-  rank: Option[IndexedSeq[T] => Rank[T, T]]
+  rank: Option[IndexedSeq[T] => Rank[T, T]],
+  uniformCost: Boolean
 ) extends BitSketchers[T] {
 
   val sketchLength = sketchers.length
 
   def getSketchFragment(item: T): Array[Long] = {
     val res = new Array[Long]((sketchLength+63)/64)
-    var i = 0
-    while (i < sketchLength) {
+    var i = 0 ; while (i < sketchLength) {
       val s = sketchers(i)(item)
       val bit = if (s) 1L else 0L
       res(i / 64) |= (bit << (i % 64))
       i += 1
     }
     res
+  }
+
+  def getSketchMultiFragment(item: T): MultiFragment[Array[Long]] = {
+    val hashes = new Array[Long]((sketchLength+63)/64)
+    val costs  = new Array[Double](sketchLength)
+
+    var i = 0 ; while (i < sketchLength) {
+      val m = sketchers(i).multi(item)
+      val bit = (if (m.hash) 1L else 0L)
+      hashes(i / 64) |= (bit << (i % 64))
+      costs(i) = m.cost
+      i += 1
+    }
+    MultiFragment(hashes, costs, null)
   }
 
 }

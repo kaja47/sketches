@@ -14,7 +14,7 @@ object MinHash {
 
   /** based on https://www.sumologic.com/2015/10/22/rapid-similarity-search-with-weighted-min-hash/ */
   def weighted[T, El](hashFunctions: Int, weights: El => Int)(implicit mk: MinHashImpl[T, El]): IntSketchers[T] =
-    Sketchers(hashFunctions, (i: Int) => mk(HashFunc.random(i*1000), weights), Estimator(hashFunctions), Some(mk.mkRank))
+    Sketchers(hashFunctions, (i: Int) => mk(HashFunc.random(i*1000), weights), Estimator(hashFunctions), Some(mk.mkRank), true)
 
   /** MinHash that uses only one bit. It's much faster than traditional MinHash
     * but it seems it's less precise.
@@ -25,28 +25,42 @@ object MinHash {
     singleBitWeighted(hashFunctions, (a: Any) => 1)
 
   def singleBitWeighted[T, El](hashFunctions: Int, weights: El => Int)(implicit mk: MinHashImpl[T, El]): BitSketchers[T] =
-    Sketchers(hashFunctions, (i: Int) => onebit(mk(HashFunc.random(i*1000), weights)), SingleBitEstimator(hashFunctions), Some(mk.mkRank))
+    Sketchers(hashFunctions, (i: Int) => onebit(mk(HashFunc.random(i*1000), weights)), SingleBitEstimator(hashFunctions), Some(mk.mkRank), true)
 
-  private def onebit[T](f: T => Int) = (t: T) => (f(t) & 1) != 0
+  private def onebit[T](f: IntSketcher[T]) = new BitSketcher[T] {
+    override def apply(t: T) = (f(t) & 1) != 0
+    def multi(t: T) = {
+      val m = f.multi(t)
+      BitMulti((m.hash & 1) != 0, m.cost)
+    }
+  }
 
 
   trait MinHashImpl[T, +El] {
-    def apply(hf: HashFunc[Int], weights: El => Int): (T => Int)
+    def apply(hf: HashFunc[Int], weights: El => Int): IntSketcher[T]
     def mkRank: IndexedSeq[T] => Rank[T, T]
   }
 
   implicit val IntArrayMinHashImpl = new MinHashImpl[Array[Int], Int] {
-    def apply(hf: HashFunc[Int], weights: Int => Int) = (set: Array[Int]) => minhashArr(set, hf, weights)
-    def mkRank = (items: IndexedSeq[Array[Int]]) => SimFun[Array[Int]](fastSparse.jaccardSimilarity, items)
+    type Item = Array[Int]
+    def apply(hf: HashFunc[Int], weights: Int => Int) = new IntSketcher[Item] {
+      override def apply(set: Item) = minhashArrInt(set, hf, weights)
+      def multi(set: Item) = minhashArr(set, hf, weights)
+    }
+    def mkRank = (items: IndexedSeq[Item]) => SimFun[Item](fastSparse.jaccardSimilarity, items)
   }
 
   implicit def GeneralMinHashImpl[El] = new MinHashImpl[Set[El], El] {
-    def apply(hf: HashFunc[Int], weights: El => Int) = (set: Set[El])=> minhashTrav(set, hf, weights)
-    def mkRank = (items: IndexedSeq[Set[El]]) => SimFun[Set[El]](jacc, items)
+    type Item = Set[El]
+    def apply(hf: HashFunc[Int], weights: El => Int) = new IntSketcher[Item] {
+      //def apply (set: Item) = minhashTrav(set, hf, weights)
+      def multi(set: Item) = minhashTrav(set, hf, weights)
+    }
+    def mkRank = (items: IndexedSeq[Item]) => SimFun[Item](jacc, items)
   }
 
 
-  private def minhashArr(set: Array[Int], f: HashFunc[Int], weights: Int => Int): Int = {
+  private def minhashArrInt(set: Array[Int], f: HashFunc[Int], weights: Int => Int): Int = {
     var min = Int.MaxValue
     var j = 0 ; while (j < set.length) {
       var h = set(j)
@@ -60,16 +74,44 @@ object MinHash {
     min
   }
 
-  private def minhashTrav[El](set: Set[El], f: HashFunc[Int], weights: El => Int): Int = {
-    var min = Int.MaxValue
+  private def minhashArr(set: Array[Int], f: HashFunc[Int], weights: Int => Int): IntMulti = {
+    var min, min2 = Int.MaxValue
+    var j = 0 ; while (j < set.length) {
+      var h = set(j)
+      var i = 0 ; while (i < weights(j)) {
+        h = f(h)
+        //min = math.min(min, h)
+        if (h < min) {
+          min2 = math.min(min2, min)
+          min = h
+        }
+        if (h != min) {
+          min2 = math.min(min2, h)
+        }
+        i += 1
+      }
+      j += 1
+    }
+    IntMulti(min, 1, min2)
+  }
+
+  private def minhashTrav[El](set: Set[El], f: HashFunc[Int], weights: El => Int): IntMulti = {
+    var min, min2 = Int.MaxValue
     for (el <- set) {
       var h = el.hashCode
       for (_ <- 0 until weights(el)) {
         h = f(h)
-        min = math.min(min, h)
+        //min = math.min(min, h)
+        if (h < min) {
+          min2 = math.min(min2, min)
+          min = h
+        }
+        if (h != min) {
+          min2 = math.min(min2, h)
+        }
       }
     }
-    min
+    IntMulti(min, 1, min2)
   }
 
   protected def jacc[El](a: Set[El], b: Set[El]) = {
@@ -111,7 +153,7 @@ object MinHash {
 /** Estimates cosine of the angle between two vectors. */
 object RandomHyperplanes {
   def apply[T](n: Int, vectorLength: Int, normalized: Boolean = false)(implicit ev: CanDot[T]): BitSketchers[T] = {
-    Sketchers(n, (i: Int) => mkSketcher(vectorLength, i * 1000), Estimator(n), Some(mkRank(ev, normalized)))
+    Sketchers(n, (i: Int) => mkSketcher(vectorLength, i * 1000), Estimator(n), Some(mkRank(ev, normalized)), false)
   }
 
 //  def apply(rowMatrix: DenseMatrix[Double], n: Int): BitSketch[DenseVector[Double]] = ???
@@ -206,7 +248,11 @@ object RandomHyperplanes {
 
   private def mkSketcher[T](length: Int, seed: Int)(implicit ev: CanDot[T]): BitSketcher[T] = new BitSketcher[T] {
     private val rand = ev.makeRandomHyperplane(length, seed)
-    def apply(item: T) = ev.dotRndVec(item, rand) > 0.0
+    //def apply(item: T) = ev.dotRndVec(item, rand) > 0.0
+    def multi(item: T) = {
+      val dot = ev.dotRndVec(item, rand)
+      BitMulti(dot > 0.0, math.abs(dot))
+    }
   }
 
   private def mkRandomHyperplane(length: Int, seed: Int): DenseVector[Double] = {
@@ -232,15 +278,23 @@ object RandomHyperplanes {
 object RandomProjections {
 
   def apply[V](projections: Int, bucketSize: Double, vectorLength: Int): IntSketchers[bVector[Double]] =
-    Sketchers(projections, (i: Int) => mkSketcher(vectorLength, i * 1000, bucketSize), Estimator(projections), None)
+    Sketchers(projections, (i: Int) => mkSketcher(vectorLength, i * 1000, bucketSize), Estimator(projections), None, false)
 
 
   private def mkSketcher(vectorLength: Int, seed: Int, bucketSize: Double) =
     new IntSketcher[bVector[Double]] {
       private val randVec = mkRandomUnitVector(vectorLength, seed)
 
-      def apply(item: bVector[Double]): Int =
-        ((randVec dot item) / bucketSize).toInt
+//      def apply(item: bVector[Double]): Int =
+//        ((randVec dot item) / bucketSize).toInt
+
+      def multi(item: bVector[Double]) = {
+        val d = ((randVec dot item) / bucketSize)
+        val bucket = d.toInt
+        val neighbour = bucket + (if (d < bucket+0.5) -1 else +1)
+        val cost = 0.5 - math.abs(bucket+0.5-d)
+        IntMulti(bucket, cost, neighbour)
+      }
     }
 
   private def mkRandomUnitVector(length: Int, seed: Int) = {
@@ -248,7 +302,7 @@ object RandomProjections {
     normalize(DenseVector.fill[Double](length)(rand.nextGaussian), 2)
     //normalize(DenseVector.rand[Double](length, Rand.gaussian), 2)
   }
-  
+
   // def mkRank = (items: IndexedSeq[T]) => SimFun((a, b) => sum(pow(a - b, 2)), items)
 
   case class Estimator(sketchLength: Int) extends IntEstimator {
@@ -447,10 +501,14 @@ object HammingDistance {
       val sketchLength = bits
       val estimator = Estimator(bits)
       val rank = None
+      val uniformCost = true
+
       def getSketchFragment(item: Array[Long]) = {
         require(item.length*64 == bits)
         item
       }
+      def getSketchMultiFragment(item: Array[Long]) =
+        MultiFragment(getSketchFragment(item), null, null)
     }
 
     BitSketch[Array[Long]](arr, sketchers)
@@ -490,9 +548,11 @@ object SimHash {
       val sketchLength = 64
       val estimator = HammingDistance.Estimator(64)
       val rank = None
-      def getSketchFragment(item: Array[T]): Array[Long] = {
+      val uniformCost = true
+
+      def getSketchFragment(item: Array[T]): Array[Long] =
         Array[Long](doSimHash64(item, f))
-      }
+      def getSketchMultiFragment(item: Array[T]) = ???
     }
 
 

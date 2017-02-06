@@ -2,14 +2,6 @@ package atrox.sketch
 
 import atrox.Bits
 
-/** Sketching can be fully materialized Sketch table or dataset wrapped in
-  * Sketching class.
-  * Both methods must return a freshly alocated array. */
-case class Query[Q, SketchArray](sk: Sketching[Q, SketchArray]) {
-  def query(q: Q): SketchArray = sk.sketchers.getSketchFragment(q)
-  def query(idx: Int): SketchArray = sk.getSketchFragment(idx)
-}
-
 
 trait Rank[-Q, S] {
   def map(q: Q): S
