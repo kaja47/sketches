@@ -3,6 +3,8 @@ package atrox.sort
 import java.util.Arrays
 import java.lang.Float.floatToRawIntBits
 import java.lang.Double.doubleToRawLongBits
+import atrox.Bits
+import scala.reflect.ClassTag
 
 
 /** Radix sort is non-comparative sorting alorithm that have linear complexity
@@ -436,5 +438,32 @@ object RadixSort {
     }
 
     handleResults(arr, input, output, returnResultInSourceArray)
+  }
+
+
+  def sortedByInt[T <: AnyRef: ClassTag](arr: Array[T])(f: T => Int): Array[T] = {
+    val pack = new Array[Long](arr.length)
+    var i = 0 ; while (i < arr.length) {
+      pack(i) = Bits.pack(f(arr(i)), i)
+      i += 1
+    }
+
+    val (sorted, _) = RadixSort.sort(pack, new Array[Long](arr.length), 0, arr.length, 4, 8, false)
+
+    val res = new Array[T](arr.length)
+    i = 0 ; while (i < arr.length) {
+      res(i) = arr(Bits.unpackIntLo(sorted(i)))
+      i += 1
+    }
+
+    res
+  }
+
+  def sortByInt[T <: AnyRef: ClassTag](arr: Array[T])(f: T => Int): Unit = {
+    val res = sortedByInt(arr)(f)
+    var i = 0 ; while (i < arr.length) {
+      arr(i) = res(i)
+      i += 1
+    }
   }
 }
