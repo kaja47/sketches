@@ -509,8 +509,9 @@ trait LSHBulkOps[Q, S] { self: LSH[Q, S] =>
   def allSimilarIndexes: Iterator[(Int, Idxs)] = allSimilarIndexes(self.cfg)
   def allSimilarIndexes(cfg: LSHCfg): Iterator[(Int, Idxs)] =
     (cfg.compact, cfg.parallel) match {
-      case (true, false) => _allSimilar_compact_crawling(cfg)
-      case (true, par) => parallelBatches(0 until itemsCount iterator, par) { idx => (idx, similarIndexes(idx, cfg)) }
+      case (true, false) => Crawl.iterator(itemsCount, (idx: Int) => similarIndexes(idx, cfg))
+      case (true, true) => ParallelCrawl.iterator(itemsCount, (idx: Int) => similarIndexes(idx, cfg))
+      //case (true, true) => parallelBatches(0 until itemsCount iterator, true) { idx => (idx, similarIndexes(idx, cfg)) }
       case (false, _)  => _allSimilar_notCompact(cfg) map { case (idx, res) => (idx, res.result) }
     }
 
@@ -525,64 +526,6 @@ trait LSHBulkOps[Q, S] { self: LSH[Q, S] =>
         }
     }
 
-
-  /** Compact strategy processing most similar items first. That way a next
-    * processed element shares most of it's candidates with a previously
-    * processed one. Those shared candidates are ready in a CPU cache.
-    * This strategy is often 25% faster than naive compact linear strategy. */
-  def _allSimilar_compact_crawling(cfg: LSHCfg): Iterator[(Int, Idxs)] = {
-    import collection.mutable.BitSet
-
-    class WorkStack {
-      private var arr = new Array[Int](256)
-      private var top = 0
-      def isEmpty = top == 0
-      def isFull = top == arr.length
-      def push(x: Int) = { arr(top) = x ; top += 1 }
-      def pop(): Int = { top -= 1 ; arr(top) }
-    }
-
-    val mark = new BitSet(itemsCount)
-    var waterline = 0
-    val stack = new WorkStack
-
-    def progressWaterlineAndFillStackIfEmpty() = {
-      if (stack.isEmpty) {
-        while (waterline < itemsCount && mark(waterline)) { waterline += 1 }
-        if (waterline < itemsCount) {
-          stack.push(waterline)
-          mark(waterline) = true
-        }
-      }
-    }
-
-    new Iterator[(Int, Idxs)] {
-
-      def hasNext = {
-        progressWaterlineAndFillStackIfEmpty()
-        !stack.isEmpty
-      }
-
-      def next() = {
-        progressWaterlineAndFillStackIfEmpty()
-        val w = stack.pop()
-
-        val sims = similarIndexes(w, cfg)
-        //mark(w)
-
-        for (s <- sims) {
-          if (!mark(s) && !stack.isFull) {
-            stack.push(s)
-            mark(s) = true
-          }
-        }
-
-        (w, sims)
-      }
-
-    }
-
-  }
 
   /** Needs to store all similar indexes in memory + some overhead, but it's
     * much faster, because it needs to do only half of iterations and accessed
