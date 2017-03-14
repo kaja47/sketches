@@ -2,9 +2,10 @@ package atrox.sketch
 
 import scala.collection.mutable.{ ArrayBuffer, BitSet }
 import java.util.concurrent._
+import atrox.Cursor
 
 
-class WorkStack(val size: Int) {
+protected class WorkStack(val size: Int) {
   private var arr = new Array[Int](size)
   private var top = 0
   def isEmpty = top == 0
@@ -14,14 +15,15 @@ class WorkStack(val size: Int) {
 }
 
 
-object Crawl {
-  type Idxs = Array[Int]
+protected object Crawl {
+  def par[R](itemsCount: Int, compute: Int => R, read: R => Cursor[Int]): Iterator[(Int, R)] =
+     new ParallelCrawl(itemsCount, compute, read).run()
 
   /** Compact strategy processing most similar items first. That way a next
     * processed element shares most of it's candidates with a previously
     * processed one. Those shared candidates are ready in a CPU cache.
     * This strategy is often 25% faster than naive compact linear strategy. */
-  def iterator(itemsCount: Int, compute: Int => Array[Int]): Iterator[(Int, Idxs)] = {
+   def seq[R](itemsCount: Int, compute: Int => R, read: R => Cursor[Int]): Iterator[(Int, R)] = {
 
     val mark = new BitSet(itemsCount)
     var waterline = 0
@@ -37,7 +39,7 @@ object Crawl {
       }
     }
 
-    new Iterator[(Int, Idxs)] {
+    new Iterator[(Int, R)] {
 
       def hasNext = {
         progressWaterlineAndFillStackIfEmpty()
@@ -51,8 +53,10 @@ object Crawl {
         val sims = compute(w)
         //mark(w)
 
-        for (s <- sims) {
-          if (!stack.isFull && !mark(s)) {
+        val cur = read(sims)
+        while (cur.moveNext() && !stack.isFull) {
+          val s = cur.value
+          if (!mark(s)) {
             stack.push(s)
             mark(s) = true
           }
@@ -68,19 +72,11 @@ object Crawl {
 }
 
 
-object ParallelCrawl {
-  type Idxs = Array[Int]
-
-  def iterator(itemsCount: Int, compute: Int => Array[Int]): Iterator[(Int, Idxs)] =
-     new ParallelCrawl(itemsCount, compute).run()
-}
-
-
-class ParallelCrawl(
+protected class ParallelCrawl[R](
     val itemsCount: Int,
-    val compute: Int => Array[Int]
+    val compute: Int => R,
+    val read: R => Cursor[Int]
 ) { self =>
-  type Idxs = Array[Int]
 
   val mark = new BitSet(itemsCount)
   var waterline = 0
@@ -136,7 +132,7 @@ class ParallelCrawl(
         return
       }
 
-      val res = new ArrayBuffer[(Int, Idxs)](stack.size)
+      val res = new ArrayBuffer[(Int, R)](stack.size)
       while (!stack.isEmpty) {
         val w = stack.pop()
         res += ((w, compute(w)))
@@ -145,24 +141,22 @@ class ParallelCrawl(
       res.foreach { r => queue.put(r) }
 
       self.synchronized {
-        val neighborhood = res(0)._2
-        var i = 0
-        while (i < neighborhood.size && !stack.isFull) {
-          val s = neighborhood(i)
+        val cur = read(res(0)._2)
+        while (cur.moveNext() && !stack.isFull) {
+          val s = cur.value
           if (!mark(s)) {
             stack.push(s)
             mark(s) = true
           }
-          i += 1
         }
       }
 
     }
   }
 
-  def iterator = new Iterator[(Int, Idxs)] {
+  def iterator = new Iterator[(Int, R)] {
     private var running = threads
-    var el: (Int, Idxs) = null
+    var el: (Int, R) = null
 
     def hasNext = {
       if (el != null) true 
@@ -175,7 +169,7 @@ class ParallelCrawl(
         } else if (x == null) {
           sys.error("this should not happen")
         } else {
-          el = x.asInstanceOf[(Int, Idxs)]
+          el = x.asInstanceOf[(Int, R)]
           true
         }
       }

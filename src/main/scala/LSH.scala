@@ -1,6 +1,6 @@
 package atrox.sketch
 
-import atrox.{ fastSparse, IntFreqMap, IntSet, Bits, Cursor2 }
+import atrox.{ fastSparse, IntFreqMap, IntSet, Bits, Cursor2, IntArrayCursor, IntSeqMapCursor }
 import java.util.concurrent.{ CopyOnWriteArrayList, ThreadLocalRandom }
 import java.util.concurrent.atomic.LongAdder
 import java.lang.Math.{ pow, log, max, min }
@@ -509,8 +509,8 @@ trait LSHBulkOps[Q, S] { self: LSH[Q, S] =>
   def allSimilarIndexes: Iterator[(Int, Idxs)] = allSimilarIndexes(self.cfg)
   def allSimilarIndexes(cfg: LSHCfg): Iterator[(Int, Idxs)] =
     (cfg.compact, cfg.parallel) match {
-      case (true, false) => Crawl.iterator(itemsCount, (idx: Int) => similarIndexes(idx, cfg))
-      case (true, true) => ParallelCrawl.iterator(itemsCount, (idx: Int) => similarIndexes(idx, cfg))
+      case (true, false) => Crawl.seq[Idxs](itemsCount, idx => similarIndexes(idx, cfg), idxs => new IntArrayCursor(idxs))
+      case (true, true)  => Crawl.par[Idxs](itemsCount, idx => similarIndexes(idx, cfg), idxs => new IntArrayCursor(idxs))
       //case (true, true) => parallelBatches(0 until itemsCount iterator, true) { idx => (idx, similarIndexes(idx, cfg)) }
       case (false, _)  => _allSimilar_notCompact(cfg) map { case (idx, res) => (idx, res.result) }
     }
@@ -518,7 +518,9 @@ trait LSHBulkOps[Q, S] { self: LSH[Q, S] =>
   def allSimilarItems: Iterator[(Int, IndexedSeq[Sim])] = allSimilarItems(self.cfg)
   def allSimilarItems(cfg: LSHCfg): Iterator[(Int, IndexedSeq[Sim])] =
     (cfg.compact, cfg.parallel) match {
-      case (true, par) => parallelBatches(0 until itemsCount iterator, par) { idx => (idx, similarItems(idx, cfg)) }
+      case (true, false) => Crawl.seq[IndexedSeq[Sim]](itemsCount, idx => similarItems(idx, cfg), sims => new IntSeqMapCursor(sims)(_.idx))
+      case (true, true)  => Crawl.par[IndexedSeq[Sim]](itemsCount, idx => similarItems(idx, cfg), sims => new IntSeqMapCursor(sims)(_.idx))
+      //case (true, par) => parallelBatches(0 until itemsCount iterator, par) { idx => (idx, similarItems(idx, cfg)) }
       case (false, _)  =>
         val iter = _allSimilar_notCompact(cfg)
         parallelBatches(iter, cfg.parallel, batchSize = 256) { case (idx, simIdxs) =>

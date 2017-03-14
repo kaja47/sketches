@@ -33,6 +33,18 @@ abstract class Cursor2[@spec(Int, Long, Float, Double) K, @spec(Int, Long, Float
   }
 }
 
+class IntArrayCursor(arr: Array[Int]) extends Cursor[Int] {
+  private[this] var i = -1
+  def moveNext(): Boolean = { i += 1 ; i < arr.length }
+  def value: Int = arr(i)
+}
+
+class IntSeqMapCursor[T](seq: Seq[T])(f: T => Int) extends Cursor[Int] {
+  private[this] var i = -1
+  def moveNext(): Boolean = { i += 1 ; i < seq.size }
+  def value: Int = f(seq(i))
+}
+
 
 /** Set specialized for int values that uses direct hashing.
   *
